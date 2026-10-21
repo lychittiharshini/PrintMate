@@ -1,0 +1,6 @@
+{
+  "name": "PrintMate – Printing Steps Guide",
+  "description": "Minimal cinematic printing instructions and Xerox shop checklist assistant.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
