@@ -1,9 +1,11 @@
-export type GuideCategory = 
+export type DefaultGuideCategory = 
   | 'WhatsApp'
   | 'Cards & IDs'
   | 'Xerox'
   | 'Colour Print'
   | 'Email & PDF';
+
+export type GuideCategory = string;
 
 export interface GuideStep {
   id: string;
@@ -16,9 +18,19 @@ export interface Guide {
   id: string;
   title: string;
   description?: string; // Optional description for printing guides/tasks
-  category: GuideCategory;
+  category: string; // Dynamic printing category
   iconName: string;
   steps: GuideStep[];
+  updatedAt?: number;
+}
+
+export interface PrintingCategory {
+  id: string;
+  name: string;
+  description?: string;
+  icon?: string;
+  color?: PastelColor;
+  createdAt?: number;
   updatedAt?: number;
 }
 
@@ -63,4 +75,12 @@ export interface Product {
   visibility: ProductVisibility; // 'private' (default) or 'published'
   createdAt: number;
   updatedAt?: number;
+}
+
+export interface SharedDataPayload {
+  guides: Guide[];
+  printingCategories: PrintingCategory[];
+  categories: ProductCategory[];
+  products: Product[];
+  lastUpdated: number;
 }

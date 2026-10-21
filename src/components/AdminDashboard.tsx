@@ -21,11 +21,13 @@ import {
   EyeOff,
   Globe,
   Lock,
+  RefreshCw,
+  Tag,
 } from 'lucide-react';
 import {
   Guide,
-  GuideCategory,
   GuideStep,
+  PrintingCategory,
   ProductCategory,
   Product,
   PastelColor,
@@ -36,16 +38,21 @@ import { generateUniqueId, compressImageFile } from '../utils/storage';
 
 interface AdminDashboardProps {
   guides: Guide[];
+  printingCategories: PrintingCategory[];
   categories: ProductCategory[];
   products: Product[];
   onUpdateGuides: (updatedGuides: Guide[]) => void;
+  onUpdatePrintingCategories: (updatedCategories: PrintingCategory[]) => void;
   onUpdateCategories: (updatedCategories: ProductCategory[]) => void;
   onUpdateProducts: (updatedProducts: Product[]) => void;
   onLogout: () => void;
   onReturnToSite: () => void;
+  isSyncing?: boolean;
+  onManualSync?: () => void;
+  lastSyncTime?: number | null;
 }
 
-type AdminTab = 'categories' | 'products' | 'guides';
+type AdminTab = 'guides' | 'printing_categories' | 'products' | 'categories';
 
 const PASTEL_COLORS: { label: string; value: PastelColor; bg: string; border: string }[] = [
   { label: 'Lavender', value: 'lavender', bg: '#f3e8ff', border: '#e9d5ff' },
@@ -58,15 +65,20 @@ const PASTEL_COLORS: { label: string; value: PastelColor; bg: string; border: st
 
 export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   guides,
+  printingCategories,
   categories,
   products,
   onUpdateGuides,
+  onUpdatePrintingCategories,
   onUpdateCategories,
   onUpdateProducts,
   onLogout,
   onReturnToSite,
+  isSyncing = false,
+  onManualSync,
+  lastSyncTime,
 }) => {
-  const [activeTab, setActiveTab] = useState<AdminTab>('categories');
+  const [activeTab, setActiveTab] = useState<AdminTab>('guides');
   const [notification, setNotification] = useState<string | null>(null);
 
   const triggerNotification = (msg: string) => {
@@ -75,250 +87,111 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   };
 
   // ==========================================
-  // CATEGORIES STATE & HANDLERS
+  // PRINTING CATEGORIES STATE & HANDLERS
   // ==========================================
-  const [catSearch, setCatSearch] = useState('');
-  const [isAddingCategory, setIsAddingCategory] = useState(false);
-  const [newCatName, setNewCatName] = useState('');
-  const [newCatDesc, setNewCatDesc] = useState('');
-  const [newCatIcon, setNewCatIcon] = useState('📦');
-  const [newCatColor, setNewCatColor] = useState<PastelColor>('lavender');
+  const [pcatSearch, setPcatSearch] = useState('');
+  const [isAddingPcat, setIsAddingPcat] = useState(false);
+  const [newPcatName, setNewPcatName] = useState('');
+  const [newPcatDesc, setNewPcatDesc] = useState('');
+  const [newPcatIcon, setNewPcatIcon] = useState('Printer');
+  const [newPcatColor, setNewPcatColor] = useState<PastelColor>('lavender');
 
-  const [editingCategory, setEditingCategory] = useState<ProductCategory | null>(null);
-  const [categoryToDelete, setCategoryToDelete] = useState<ProductCategory | null>(null);
+  const [editingPcat, setEditingPcat] = useState<PrintingCategory | null>(null);
+  const [pcatToDelete, setPcatToDelete] = useState<PrintingCategory | null>(null);
 
-  const filteredCategories = useMemo(() => {
-    if (!catSearch.trim()) return categories;
-    const q = catSearch.toLowerCase().trim();
-    return categories.filter(
+  const filteredPrintingCategories = useMemo(() => {
+    if (!pcatSearch.trim()) return printingCategories;
+    const q = pcatSearch.toLowerCase().trim();
+    return printingCategories.filter(
       (c) =>
         c.name.toLowerCase().includes(q) ||
-        c.description?.toLowerCase().includes(q)
+        (c.description?.toLowerCase().includes(q) ?? false)
     );
-  }, [categories, catSearch]);
+  }, [printingCategories, pcatSearch]);
 
-  const handleCreateCategory = (e: React.FormEvent) => {
+  const handleCreatePrintingCategory = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newCatName.trim()) return;
+    if (!newPcatName.trim()) return;
 
-    const newCat: ProductCategory = {
-      id: generateUniqueId('cat'),
-      name: newCatName.trim(),
-      description: newCatDesc.trim() || undefined,
-      icon: newCatIcon.trim() || '📦',
-      color: newCatColor,
+    const newCategory: PrintingCategory = {
+      id: generateUniqueId('pcat'),
+      name: newPcatName.trim(),
+      description: newPcatDesc.trim() || undefined,
+      icon: newPcatIcon.trim() || 'Printer',
+      color: newPcatColor,
       createdAt: Date.now(),
     };
 
-    onUpdateCategories([...categories, newCat]);
-    setIsAddingCategory(false);
-    setNewCatName('');
-    setNewCatDesc('');
-    setNewCatIcon('📦');
-    triggerNotification(`Created category "${newCat.name}".`);
+    onUpdatePrintingCategories([...printingCategories, newCategory]);
+    setIsAddingPcat(false);
+    setNewPcatName('');
+    setNewPcatDesc('');
+    triggerNotification(`Created printing category "${newCategory.name}".`);
   };
 
-  const handleSaveCategoryEdit = (e: React.FormEvent) => {
+  const handleSavePrintingCategoryEdit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!editingCategory || !editingCategory.name.trim()) return;
+    if (!editingPcat || !editingPcat.name.trim()) return;
 
-    const updated = categories.map((c) =>
-      c.id === editingCategory.id
-        ? { ...editingCategory, updatedAt: Date.now() }
+    const oldName = printingCategories.find((c) => c.id === editingPcat.id)?.name;
+    const newName = editingPcat.name.trim();
+
+    const updated = printingCategories.map((c) =>
+      c.id === editingPcat.id
+        ? { ...editingPcat, name: newName, updatedAt: Date.now() }
         : c
     );
-    onUpdateCategories(updated);
-    setEditingCategory(null);
-    triggerNotification('Category updated successfully.');
-  };
+    onUpdatePrintingCategories(updated);
 
-  const handleConfirmDeleteCategory = () => {
-    if (!categoryToDelete) return;
-    const catId = categoryToDelete.id;
-    // Remove category
-    const remainingCats = categories.filter((c) => c.id !== catId);
-    onUpdateCategories(remainingCats);
-
-    // Also remove associated products to prevent orphaned data
-    const remainingProds = products.filter((p) => p.categoryId !== catId);
-    if (remainingProds.length !== products.length) {
-      onUpdateProducts(remainingProds);
+    // If category name changed, update existing guides using old category name!
+    if (oldName && oldName !== newName) {
+      const updatedGuides = guides.map((g) =>
+        g.category === oldName ? { ...g, category: newName, updatedAt: Date.now() } : g
+      );
+      onUpdateGuides(updatedGuides);
     }
 
-    setCategoryToDelete(null);
-    triggerNotification(`Category "${categoryToDelete.name}" and its products removed.`);
+    setEditingPcat(null);
+    triggerNotification('Printing category updated successfully.');
   };
 
-  // ==========================================
-  // PRODUCTS STATE & HANDLERS
-  // ==========================================
-  const [prodSearch, setProdSearch] = useState('');
-  const [prodFilterCat, setProdFilterCat] = useState<string>('all');
-  const [prodFilterVisibility, setProdFilterVisibility] = useState<string>('all');
-  const [isAddingProduct, setIsAddingProduct] = useState(false);
+  const handleConfirmDeletePrintingCategory = () => {
+    if (!pcatToDelete) return;
+    const catName = pcatToDelete.name;
+    const remaining = printingCategories.filter((c) => c.id !== pcatToDelete.id);
+    onUpdatePrintingCategories(remaining);
 
-  const [newProdName, setNewProdName] = useState('');
-  const [newProdCatId, setNewProdCatId] = useState('');
-  const [newProdDesc, setNewProdDesc] = useState('');
-  const [newProdPrice, setNewProdPrice] = useState<number | ''>('');
-  const [newProdSalePrice, setNewProdSalePrice] = useState<number | ''>('');
-  const [newProdStatus, setNewProdStatus] = useState<ProductStatus>('in_stock');
-  const [newProdVisibility, setNewProdVisibility] = useState<ProductVisibility>('private');
-  const [newProdImage, setNewProdImage] = useState<string>('');
-  const [isUploadingImage, setIsUploadingImage] = useState(false);
-  const [imageUploadError, setImageUploadError] = useState<string | null>(null);
-
-  const [editingProduct, setEditingProduct] = useState<Product | null>(null);
-  const [productToDelete, setProductToDelete] = useState<Product | null>(null);
-
-  const filteredProducts = useMemo(() => {
-    return products.filter((prod) => {
-      // Category filter
-      const matchesCat =
-        prodFilterCat === 'all' || prod.categoryId === prodFilterCat;
-      if (!matchesCat) return false;
-
-      // Visibility filter
-      const matchesVis =
-        prodFilterVisibility === 'all' ||
-        prod.visibility === prodFilterVisibility;
-      if (!matchesVis) return false;
-
-      // Search query
-      if (!prodSearch.trim()) return true;
-      const q = prodSearch.toLowerCase().trim();
-      const inName = prod.name.toLowerCase().includes(q);
-      const inDesc = prod.description?.toLowerCase().includes(q) || false;
-      return inName || inDesc;
-    });
-  }, [products, prodFilterCat, prodFilterVisibility, prodSearch]);
-
-  const handleImageFileChange = async (
-    file: File | null,
-    target: 'new' | 'edit'
-  ) => {
-    if (!file) return;
-    setImageUploadError(null);
-    setIsUploadingImage(true);
-    try {
-      const compressedDataUrl = await compressImageFile(file, 380, 0.75);
-      if (target === 'new') {
-        setNewProdImage(compressedDataUrl);
-      } else if (editingProduct) {
-        setEditingProduct({ ...editingProduct, imageUrl: compressedDataUrl });
-      }
-    } catch (err: any) {
-      setImageUploadError(err.message || 'Image processing failed.');
-    } finally {
-      setIsUploadingImage(false);
-    }
-  };
-
-  const handleOpenAddProduct = (catId?: string) => {
-    setNewProdCatId(catId || (categories[0]?.id || ''));
-    setNewProdName('');
-    setNewProdDesc('');
-    setNewProdPrice('');
-    setNewProdSalePrice('');
-    setNewProdStatus('in_stock');
-    setNewProdVisibility('private'); // Private by default!
-    setNewProdImage('');
-    setImageUploadError(null);
-    setIsAddingProduct(true);
-  };
-
-  const handleCreateProduct = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newProdName.trim() || newProdPrice === '') return;
-    const priceNum = Number(newProdPrice);
-    if (priceNum < 0) {
-      alert('Price cannot be negative.');
-      return;
-    }
-
-    const saleNum =
-      newProdSalePrice !== '' ? Number(newProdSalePrice) : undefined;
-    if (saleNum !== undefined && saleNum < 0) {
-      alert('Sale price cannot be negative.');
-      return;
-    }
-
-    const newProd: Product = {
-      id: generateUniqueId('prod'),
-      name: newProdName.trim(),
-      categoryId: newProdCatId || (categories[0]?.id || ''),
-      description: newProdDesc.trim() || undefined,
-      price: priceNum,
-      salePrice: saleNum,
-      imageUrl: newProdImage || undefined,
-      status: newProdStatus,
-      visibility: newProdVisibility, // Defaults to private
-      createdAt: Date.now(),
-    };
-
-    onUpdateProducts([...products, newProd]);
-    setIsAddingProduct(false);
-    triggerNotification(
-      `Added "${newProd.name}" (${newProd.visibility === 'published' ? 'Published' : 'Private'}).`
+    // Reassign guides to another category if available or keep them
+    const fallbackCategory = remaining[0]?.name || 'General';
+    const updatedGuides = guides.map((g) =>
+      g.category === catName ? { ...g, category: fallbackCategory, updatedAt: Date.now() } : g
     );
-  };
-
-  const handleSaveProductEdit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!editingProduct || !editingProduct.name.trim()) return;
-
-    if (editingProduct.price < 0) {
-      alert('Price cannot be negative.');
-      return;
+    if (updatedGuides.some((g) => g.category !== catName)) {
+      onUpdateGuides(updatedGuides);
     }
 
-    const updated = products.map((p) =>
-      p.id === editingProduct.id
-        ? { ...editingProduct, updatedAt: Date.now() }
-        : p
-    );
-    onUpdateProducts(updated);
-    setEditingProduct(null);
-    triggerNotification(`Saved changes to "${editingProduct.name}".`);
-  };
-
-  const handleTogglePublishProduct = (prodId: string) => {
-    const updated = products.map((p) => {
-      if (p.id === prodId) {
-        const nextVis: ProductVisibility =
-          p.visibility === 'published' ? 'private' : 'published';
-        return { ...p, visibility: nextVis, updatedAt: Date.now() };
-      }
-      return p;
-    });
-    onUpdateProducts(updated);
-    const target = updated.find((p) => p.id === prodId);
-    if (target?.visibility === 'published') {
-      triggerNotification(`Published "${target.name}" to customer website.`);
-    } else {
-      triggerNotification(`Unpublished "${target?.name}" (now private to admin).`);
-    }
-  };
-
-  const handleConfirmDeleteProduct = () => {
-    if (!productToDelete) return;
-    const remaining = products.filter((p) => p.id !== productToDelete.id);
-    onUpdateProducts(remaining);
-    setProductToDelete(null);
-    triggerNotification('Product deleted.');
+    setPcatToDelete(null);
+    triggerNotification(`Deleted printing category "${catName}".`);
   };
 
   // ==========================================
-  // GUIDES STATE & HANDLERS (PRESERVED & OPTIONAL DESCRIPTION)
+  // PRINTING GUIDES / TASKS STATE & HANDLERS
   // ==========================================
+  const [guideSearch, setGuideSearch] = useState('');
+  const [guideFilterCat, setGuideFilterCat] = useState<string>('all');
   const [selectedGuideId, setSelectedGuideId] = useState<string>(
     guides[0]?.id || ''
   );
-  const selectedGuide = guides.find((g) => g.id === selectedGuideId) || guides[0];
+
+  const selectedGuide = useMemo(() => {
+    return guides.find((g) => g.id === selectedGuideId) || guides[0] || null;
+  }, [guides, selectedGuideId]);
 
   const [newGuideTitle, setNewGuideTitle] = useState('');
   const [newGuideDesc, setNewGuideDesc] = useState('');
-  const [newGuideCat, setNewGuideCat] = useState<GuideCategory>('WhatsApp');
+  const [newGuideCat, setNewGuideCat] = useState<string>(
+    printingCategories[0]?.name || 'WhatsApp'
+  );
   const [newGuideIcon, setNewGuideIcon] = useState('Printer');
   const [isAddingGuide, setIsAddingGuide] = useState(false);
 
@@ -333,6 +206,19 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     stepId: string;
   } | null>(null);
 
+  const filteredGuides = useMemo(() => {
+    return guides.filter((g) => {
+      if (guideFilterCat !== 'all' && g.category !== guideFilterCat) return false;
+      if (!guideSearch.trim()) return true;
+      const q = guideSearch.toLowerCase().trim();
+      return (
+        g.title.toLowerCase().includes(q) ||
+        (g.description?.toLowerCase().includes(q) ?? false) ||
+        g.category.toLowerCase().includes(q)
+      );
+    });
+  }, [guides, guideFilterCat, guideSearch]);
+
   const handleMoveGuide = (index: number, direction: 'up' | 'down') => {
     const targetIndex = direction === 'up' ? index - 1 : index + 1;
     if (targetIndex < 0 || targetIndex >= guides.length) return;
@@ -340,22 +226,22 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     const [moved] = reordered.splice(index, 1);
     reordered.splice(targetIndex, 0, moved);
     onUpdateGuides(reordered);
-    triggerNotification('Guide order updated.');
+    triggerNotification('Printing task order updated.');
   };
 
   const handleCreateGuide = (e: React.FormEvent) => {
     e.preventDefault();
     if (!newGuideTitle.trim()) return;
 
-    // Optional description: save empty if omitted, without placeholders or required errors
     const descValue = newGuideDesc.trim() ? newGuideDesc.trim() : undefined;
+    const chosenCat = newGuideCat || printingCategories[0]?.name || 'WhatsApp';
 
     const newGuide: Guide = {
       id: generateUniqueId('guide'),
       title: newGuideTitle.trim(),
       description: descValue,
-      category: newGuideCat,
-      iconName: newGuideIcon,
+      category: chosenCat,
+      iconName: newGuideIcon || 'Printer',
       steps: [
         { id: generateUniqueId('step'), instruction: 'Download and open document.' },
         { id: generateUniqueId('step'), instruction: 'Check printer paper tray and color mode.' },
@@ -369,14 +255,13 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     setIsAddingGuide(false);
     setNewGuideTitle('');
     setNewGuideDesc('');
-    triggerNotification(`Created guide "${newGuide.title}".`);
+    triggerNotification(`Created printing task "${newGuide.title}".`);
   };
 
   const handleSaveGuideEdit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!editingGuide || !editingGuide.title.trim()) return;
 
-    // Optional description: trim and allow empty
     const descValue = editingGuide.description?.trim()
       ? editingGuide.description.trim()
       : undefined;
@@ -388,18 +273,18 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     );
     onUpdateGuides(updated);
     setEditingGuide(null);
-    triggerNotification('Guide updated.');
+    triggerNotification('Task updated successfully.');
   };
 
   const handleConfirmDeleteGuide = () => {
     if (!guideToDelete) return;
     const remaining = guides.filter((g) => g.id !== guideToDelete.id);
     onUpdateGuides(remaining);
-    if (selectedGuideId === guideToDelete.id && remaining.length > 0) {
-      setSelectedGuideId(remaining[0].id);
+    if (selectedGuideId === guideToDelete.id) {
+      setSelectedGuideId(remaining[0]?.id || '');
     }
     setGuideToDelete(null);
-    triggerNotification('Guide removed.');
+    triggerNotification('Printing task deleted permanently from shared database.');
   };
 
   const handleAddStep = (e: React.FormEvent) => {
@@ -481,6 +366,224 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     onUpdateGuides(updated);
   };
 
+  // ==========================================
+  // STATIONERY CATEGORIES STATE & HANDLERS
+  // ==========================================
+  const [catSearch, setCatSearch] = useState('');
+  const [isAddingCategory, setIsAddingCategory] = useState(false);
+  const [newCatName, setNewCatName] = useState('');
+  const [newCatDesc, setNewCatDesc] = useState('');
+  const [newCatIcon, setNewCatIcon] = useState('📦');
+  const [newCatColor, setNewCatColor] = useState<PastelColor>('lavender');
+
+  const [editingCategory, setEditingCategory] = useState<ProductCategory | null>(null);
+  const [categoryToDelete, setCategoryToDelete] = useState<ProductCategory | null>(null);
+
+  const filteredCategories = useMemo(() => {
+    if (!catSearch.trim()) return categories;
+    const q = catSearch.toLowerCase().trim();
+    return categories.filter(
+      (c) =>
+        c.name.toLowerCase().includes(q) ||
+        (c.description?.toLowerCase().includes(q) ?? false)
+    );
+  }, [categories, catSearch]);
+
+  const handleCreateCategory = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newCatName.trim()) return;
+
+    const newCat: ProductCategory = {
+      id: generateUniqueId('cat'),
+      name: newCatName.trim(),
+      description: newCatDesc.trim() || undefined,
+      icon: newCatIcon.trim() || '📦',
+      color: newCatColor,
+      createdAt: Date.now(),
+    };
+
+    onUpdateCategories([...categories, newCat]);
+    setIsAddingCategory(false);
+    setNewCatName('');
+    setNewCatDesc('');
+    setNewCatIcon('📦');
+    triggerNotification(`Created stationery category "${newCat.name}".`);
+  };
+
+  const handleSaveCategoryEdit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingCategory || !editingCategory.name.trim()) return;
+
+    const updated = categories.map((c) =>
+      c.id === editingCategory.id
+        ? { ...editingCategory, updatedAt: Date.now() }
+        : c
+    );
+    onUpdateCategories(updated);
+    setEditingCategory(null);
+    triggerNotification('Stationery category updated successfully.');
+  };
+
+  const handleConfirmDeleteCategory = () => {
+    if (!categoryToDelete) return;
+    const catId = categoryToDelete.id;
+    const remainingCats = categories.filter((c) => c.id !== catId);
+    onUpdateCategories(remainingCats);
+
+    const remainingProds = products.filter((p) => p.categoryId !== catId);
+    if (remainingProds.length !== products.length) {
+      onUpdateProducts(remainingProds);
+    }
+
+    setCategoryToDelete(null);
+    triggerNotification(`Category "${categoryToDelete.name}" removed.`);
+  };
+
+  // ==========================================
+  // PRODUCTS STATE & HANDLERS (Private by default)
+  // ==========================================
+  const [prodSearch, setProdSearch] = useState('');
+  const [prodFilterCat, setProdFilterCat] = useState<string>('all');
+  const [prodFilterVisibility, setProdFilterVisibility] = useState<string>('all');
+  const [isAddingProduct, setIsAddingProduct] = useState(false);
+
+  const [newProdName, setNewProdName] = useState('');
+  const [newProdCatId, setNewProdCatId] = useState('');
+  const [newProdDesc, setNewProdDesc] = useState('');
+  const [newProdPrice, setNewProdPrice] = useState<number | ''>('');
+  const [newProdSalePrice, setNewProdSalePrice] = useState<number | ''>('');
+  const [newProdStatus, setNewProdStatus] = useState<ProductStatus>('in_stock');
+  const [newProdVisibility, setNewProdVisibility] = useState<ProductVisibility>('private');
+  const [newProdImage, setNewProdImage] = useState<string>('');
+  const [isUploadingImage, setIsUploadingImage] = useState(false);
+  const [imageUploadError, setImageUploadError] = useState<string | null>(null);
+
+  const [editingProduct, setEditingProduct] = useState<Product | null>(null);
+  const [productToDelete, setProductToDelete] = useState<Product | null>(null);
+
+  const filteredProducts = useMemo(() => {
+    return products.filter((prod) => {
+      const matchesCat =
+        prodFilterCat === 'all' || prod.categoryId === prodFilterCat;
+      if (!matchesCat) return false;
+
+      const matchesVis =
+        prodFilterVisibility === 'all' ||
+        prod.visibility === prodFilterVisibility;
+      if (!matchesVis) return false;
+
+      if (!prodSearch.trim()) return true;
+      const q = prodSearch.toLowerCase().trim();
+      const inName = prod.name.toLowerCase().includes(q);
+      const inDesc = prod.description?.toLowerCase().includes(q) || false;
+      return inName || inDesc;
+    });
+  }, [products, prodFilterCat, prodFilterVisibility, prodSearch]);
+
+  const handleImageFileChange = async (
+    file: File | null,
+    target: 'new' | 'edit'
+  ) => {
+    if (!file) return;
+    setImageUploadError(null);
+    setIsUploadingImage(true);
+    try {
+      const compressedDataUrl = await compressImageFile(file, 380, 0.75);
+      if (target === 'new') {
+        setNewProdImage(compressedDataUrl);
+      } else if (editingProduct) {
+        setEditingProduct({ ...editingProduct, imageUrl: compressedDataUrl });
+      }
+    } catch (err: any) {
+      setImageUploadError(err.message || 'Image processing failed.');
+    } finally {
+      setIsUploadingImage(false);
+    }
+  };
+
+  const handleOpenAddProduct = (catId?: string) => {
+    setNewProdCatId(catId || (categories[0]?.id || ''));
+    setNewProdName('');
+    setNewProdDesc('');
+    setNewProdPrice('');
+    setNewProdSalePrice('');
+    setNewProdStatus('in_stock');
+    setNewProdVisibility('private');
+    setNewProdImage('');
+    setImageUploadError(null);
+    setIsAddingProduct(true);
+  };
+
+  const handleCreateProduct = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newProdName.trim() || newProdPrice === '') return;
+    const priceNum = Number(newProdPrice);
+    if (priceNum < 0) return;
+
+    const saleNum =
+      newProdSalePrice !== '' ? Number(newProdSalePrice) : undefined;
+    if (saleNum !== undefined && saleNum < 0) return;
+
+    const newProd: Product = {
+      id: generateUniqueId('prod'),
+      name: newProdName.trim(),
+      categoryId: newProdCatId || (categories[0]?.id || ''),
+      description: newProdDesc.trim() || undefined,
+      price: priceNum,
+      salePrice: saleNum,
+      imageUrl: newProdImage || undefined,
+      status: newProdStatus,
+      visibility: newProdVisibility,
+      createdAt: Date.now(),
+    };
+
+    onUpdateProducts([...products, newProd]);
+    setIsAddingProduct(false);
+    triggerNotification(
+      `Added "${newProd.name}" (${newProd.visibility === 'published' ? 'Published' : 'Private'}).`
+    );
+  };
+
+  const handleSaveProductEdit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingProduct || !editingProduct.name.trim()) return;
+
+    const updated = products.map((p) =>
+      p.id === editingProduct.id
+        ? { ...editingProduct, updatedAt: Date.now() }
+        : p
+    );
+    onUpdateProducts(updated);
+    setEditingProduct(null);
+    triggerNotification(`Saved changes to "${editingProduct.name}".`);
+  };
+
+  const handleTogglePublishProduct = (prodId: string) => {
+    const updated = products.map((p) => {
+      if (p.id === prodId) {
+        const nextVis: ProductVisibility =
+          p.visibility === 'published' ? 'private' : 'published';
+        return { ...p, visibility: nextVis, updatedAt: Date.now() };
+      }
+      return p;
+    });
+    onUpdateProducts(updated);
+    const target = updated.find((p) => p.id === prodId);
+    if (target?.visibility === 'published') {
+      triggerNotification(`Published "${target.name}" to public site.`);
+    } else {
+      triggerNotification(`Unpublished "${target?.name}" (now private to admin).`);
+    }
+  };
+
+  const handleConfirmDeleteProduct = () => {
+    if (!productToDelete) return;
+    const remaining = products.filter((p) => p.id !== productToDelete.id);
+    onUpdateProducts(remaining);
+    setProductToDelete(null);
+    triggerNotification('Product deleted from inventory.');
+  };
+
   return (
     <div className="admin-container">
       {/* Top Header */}
@@ -507,7 +610,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
           </div>
           <h1 style={{ fontSize: '28px', color: 'var(--text-main)' }}>PrintMate Management</h1>
           <p style={{ color: 'var(--text-muted)', fontSize: '14px', marginTop: '4px' }}>
-            Private shop management for Dad &amp; Harshini. Products remain private by default until published.
+            Central administration for printing shop tasks, categories, and private stationery inventory.
           </p>
         </div>
 
@@ -524,6 +627,67 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
             <LogOut size={14} />
             <span>Logout</span>
           </button>
+        </div>
+      </div>
+
+      {/* Central Database Live Synchronization Status Bar */}
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          flexWrap: 'wrap',
+          gap: '12px',
+          padding: '12px 18px',
+          backgroundColor: '#f0fdf4',
+          border: '1px solid #bbf7d0',
+          borderRadius: '16px',
+          marginBottom: '20px',
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+          <span
+            style={{
+              width: '10px',
+              height: '10px',
+              borderRadius: '50%',
+              backgroundColor: '#16a34a',
+              boxShadow: '0 0 0 3px rgba(34, 197, 94, 0.2)',
+            }}
+          />
+          <div>
+            <div style={{ fontSize: '13px', fontWeight: 600, color: '#166534' }}>
+              Central Shared Database Active
+            </div>
+            <div style={{ fontSize: '12px', color: '#15803d' }}>
+              All edits and additions are saved centrally and sync across all phones, computers, and shop PCs.
+            </div>
+          </div>
+        </div>
+
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+          {lastSyncTime && (
+            <span style={{ fontSize: '11px', color: '#166534' }}>
+              Last synced: {new Date(lastSyncTime).toLocaleTimeString()}
+            </span>
+          )}
+          {onManualSync && (
+            <button
+              onClick={onManualSync}
+              disabled={isSyncing}
+              className="btn btn-outline-soft"
+              style={{
+                padding: '4px 10px',
+                fontSize: '11px',
+                borderColor: '#86efac',
+                backgroundColor: '#ffffff',
+                color: '#166534',
+              }}
+            >
+              <RefreshCw size={12} className={isSyncing ? 'animate-spin' : ''} />
+              <span>{isSyncing ? 'Syncing...' : 'Sync Now'}</span>
+            </button>
+          )}
         </div>
       </div>
 
@@ -547,12 +711,22 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
       <div className="admin-nav-tabs" role="tablist">
         <button
           role="tab"
-          aria-selected={activeTab === 'categories'}
-          onClick={() => setActiveTab('categories')}
-          className={`admin-nav-tab ${activeTab === 'categories' ? 'active' : ''}`}
+          aria-selected={activeTab === 'guides'}
+          onClick={() => setActiveTab('guides')}
+          className={`admin-nav-tab ${activeTab === 'guides' ? 'active' : ''}`}
         >
-          <Layers size={16} />
-          <span>Categories ({categories.length})</span>
+          <BookOpen size={16} />
+          <span>Printing Tasks &amp; Guides ({guides.length})</span>
+        </button>
+
+        <button
+          role="tab"
+          aria-selected={activeTab === 'printing_categories'}
+          onClick={() => setActiveTab('printing_categories')}
+          className={`admin-nav-tab ${activeTab === 'printing_categories' ? 'active' : ''}`}
+        >
+          <Tag size={16} />
+          <span>Printing Categories ({printingCategories.length})</span>
         </button>
 
         <button
@@ -562,439 +736,21 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
           className={`admin-nav-tab ${activeTab === 'products' ? 'active' : ''}`}
         >
           <ShoppingBag size={16} />
-          <span>Products &amp; Stock ({products.length})</span>
+          <span>Stationery Products ({products.length})</span>
         </button>
 
         <button
           role="tab"
-          aria-selected={activeTab === 'guides'}
-          onClick={() => setActiveTab('guides')}
-          className={`admin-nav-tab ${activeTab === 'guides' ? 'active' : ''}`}
+          aria-selected={activeTab === 'categories'}
+          onClick={() => setActiveTab('categories')}
+          className={`admin-nav-tab ${activeTab === 'categories' ? 'active' : ''}`}
         >
-          <BookOpen size={16} />
-          <span>Printing Guides &amp; Tasks ({guides.length})</span>
+          <Layers size={16} />
+          <span>Stationery Categories ({categories.length})</span>
         </button>
       </div>
 
-      {/* TAB 1: CATEGORIES MANAGEMENT */}
-      {activeTab === 'categories' && (
-        <div>
-          <div
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'space-between',
-              marginBottom: '20px',
-              flexWrap: 'wrap',
-              gap: '12px',
-            }}
-          >
-            <div className="search-box" style={{ maxWidth: '300px' }}>
-              <Search size={16} className="search-icon" />
-              <input
-                type="text"
-                value={catSearch}
-                onChange={(e) => setCatSearch(e.target.value)}
-                placeholder="Search categories..."
-              />
-            </div>
-
-            <button
-              onClick={() => {
-                setNewCatName('');
-                setNewCatDesc('');
-                setNewCatIcon('📦');
-                setNewCatColor('lavender');
-                setIsAddingCategory(true);
-              }}
-              className="btn btn-primary"
-            >
-              <Plus size={15} />
-              <span>Add Category</span>
-            </button>
-          </div>
-
-          <div
-            style={{
-              display: 'grid',
-              gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))',
-              gap: '18px',
-            }}
-          >
-            {filteredCategories.map((cat) => {
-              const catProducts = products.filter((p) => p.categoryId === cat.id);
-              const publishedCount = catProducts.filter((p) => p.visibility === 'published').length;
-              return (
-                <div
-                  key={cat.id}
-                  style={{
-                    backgroundColor: '#ffffff',
-                    border: '1px solid var(--border-card)',
-                    borderRadius: '18px',
-                    padding: '20px',
-                    display: 'flex',
-                    flexDirection: 'column',
-                    justifyContent: 'space-between',
-                    boxShadow: 'var(--shadow-sm)',
-                  }}
-                >
-                  <div>
-                    <div
-                      style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'space-between',
-                        marginBottom: '12px',
-                      }}
-                    >
-                      <span style={{ fontSize: '24px' }}>{cat.icon || '📦'}</span>
-                      <span
-                        style={{
-                          fontSize: '11px',
-                          fontWeight: 600,
-                          padding: '3px 10px',
-                          borderRadius: '9999px',
-                          backgroundColor: 'var(--primary-light)',
-                          color: 'var(--primary)',
-                        }}
-                      >
-                        {cat.color}
-                      </span>
-                    </div>
-
-                    <h3 style={{ fontSize: '18px', fontWeight: 600, marginBottom: '6px' }}>
-                      {cat.name}
-                    </h3>
-                    {cat.description && (
-                      <p style={{ fontSize: '13px', color: 'var(--text-muted)', lineHeight: 1.45 }}>
-                        {cat.description}
-                      </p>
-                    )}
-                  </div>
-
-                  <div
-                    style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'space-between',
-                      marginTop: '18px',
-                      paddingTop: '14px',
-                      borderTop: '1px solid var(--border-subtle)',
-                    }}
-                  >
-                    <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
-                      {catProducts.length} items ({publishedCount} public)
-                    </span>
-
-                    <div style={{ display: 'flex', gap: '6px' }}>
-                      <button
-                        onClick={() => handleOpenAddProduct(cat.id)}
-                        className="btn btn-outline-soft"
-                        style={{ padding: '6px 10px', fontSize: '12px' }}
-                        title="Add product to this category"
-                      >
-                        <Plus size={13} />
-                        <span>Add Item</span>
-                      </button>
-                      <button
-                        onClick={() => setEditingCategory(cat)}
-                        className="btn btn-outline-soft"
-                        style={{ padding: '6px 10px', fontSize: '12px' }}
-                        title="Edit category"
-                      >
-                        <Edit2 size={13} />
-                      </button>
-                      <button
-                        onClick={() => setCategoryToDelete(cat)}
-                        className="btn btn-outline-soft"
-                        style={{ padding: '6px 10px', fontSize: '12px', color: '#b91c1c' }}
-                        title="Delete category"
-                      >
-                        <Trash2 size={13} />
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      )}
-
-      {/* TAB 2: PRODUCTS & STOCK MANAGEMENT (PRIVATE BY DEFAULT) */}
-      {activeTab === 'products' && (
-        <div>
-          <div
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'space-between',
-              marginBottom: '20px',
-              flexWrap: 'wrap',
-              gap: '12px',
-            }}
-          >
-            <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', alignItems: 'center' }}>
-              <div className="search-box" style={{ maxWidth: '240px' }}>
-                <Search size={16} className="search-icon" />
-                <input
-                  type="text"
-                  value={prodSearch}
-                  onChange={(e) => setProdSearch(e.target.value)}
-                  placeholder="Search products..."
-                />
-              </div>
-
-              <select
-                value={prodFilterCat}
-                onChange={(e) => setProdFilterCat(e.target.value)}
-                className="form-select"
-                style={{ width: 'auto', padding: '8px 14px' }}
-              >
-                <option value="all">All Categories</option>
-                {categories.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.icon ? `${c.icon} ` : ''}
-                    {c.name}
-                  </option>
-                ))}
-              </select>
-
-              <select
-                value={prodFilterVisibility}
-                onChange={(e) => setProdFilterVisibility(e.target.value)}
-                className="form-select"
-                style={{ width: 'auto', padding: '8px 14px' }}
-              >
-                <option value="all">All Visibility</option>
-                <option value="private">🔒 Private Only</option>
-                <option value="published">🌐 Published Only</option>
-              </select>
-            </div>
-
-            <button onClick={() => handleOpenAddProduct()} className="btn btn-primary">
-              <Plus size={15} />
-              <span>Add Product</span>
-            </button>
-          </div>
-
-          <div
-            style={{
-              padding: '12px 16px',
-              backgroundColor: '#f3e8ff',
-              borderRadius: '12px',
-              marginBottom: '20px',
-              fontSize: '13px',
-              color: '#581c87',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'space-between',
-              flexWrap: 'wrap',
-              gap: '8px',
-            }}
-          >
-            <span>
-              🔒 Products are <strong>Private by default</strong> and hidden from customers. Click <strong>Publish</strong> on an item when you want it displayed publicly.
-            </span>
-            <span style={{ fontWeight: 600 }}>
-              {products.filter((p) => p.visibility === 'published').length} of {products.length} published
-            </span>
-          </div>
-
-          {filteredProducts.length === 0 ? (
-            <div
-              style={{
-                textAlign: 'center',
-                padding: '48px',
-                backgroundColor: '#ffffff',
-                borderRadius: '20px',
-                border: '1px dashed var(--border-medium)',
-                color: 'var(--text-muted)',
-              }}
-            >
-              No products match this filter. Click &quot;Add Product&quot; to register a new item!
-            </div>
-          ) : (
-            <div
-              style={{
-                display: 'grid',
-                gridTemplateColumns: 'repeat(auto-fill, minmax(290px, 1fr))',
-                gap: '20px',
-              }}
-            >
-              {filteredProducts.map((prod) => {
-                const cat = categories.find((c) => c.id === prod.categoryId);
-                const isPublished = prod.visibility === 'published';
-                return (
-                  <div
-                    key={prod.id}
-                    style={{
-                      backgroundColor: '#ffffff',
-                      border: isPublished
-                        ? '1px solid #86efac'
-                        : '1px solid var(--border-card)',
-                      borderRadius: '18px',
-                      overflow: 'hidden',
-                      display: 'flex',
-                      flexDirection: 'column',
-                      justifyContent: 'space-between',
-                      boxShadow: 'var(--shadow-sm)',
-                      position: 'relative',
-                    }}
-                  >
-                    <div>
-                      <div
-                        style={{
-                          height: '140px',
-                          backgroundColor: '#faf5ff',
-                          display: 'flex',
-                          alignItems: 'center',
-                          justifyContent: 'center',
-                          position: 'relative',
-                        }}
-                      >
-                        {prod.imageUrl ? (
-                          <img
-                            src={prod.imageUrl}
-                            alt={prod.name}
-                            style={{ width: '100%', height: '100%', objectFit: 'cover' }}
-                          />
-                        ) : (
-                          <Package size={36} color="var(--primary)" strokeWidth={1.5} />
-                        )}
-
-                        {/* Category Tag */}
-                        <span
-                          style={{
-                            position: 'absolute',
-                            top: '8px',
-                            left: '8px',
-                            fontSize: '11px',
-                            fontWeight: 600,
-                            padding: '2px 8px',
-                            borderRadius: '9999px',
-                            backgroundColor: 'rgba(255,255,255,0.95)',
-                          }}
-                        >
-                          {cat?.name || 'Stationery'}
-                        </span>
-
-                        {/* Visibility Badge */}
-                        <span
-                          style={{
-                            position: 'absolute',
-                            top: '8px',
-                            right: '8px',
-                            fontSize: '11px',
-                            fontWeight: 700,
-                            padding: '3px 8px',
-                            borderRadius: '9999px',
-                            backgroundColor: isPublished ? '#dcfce7' : '#f3e8ff',
-                            color: isPublished ? '#15803d' : '#6b21a8',
-                            boxShadow: '0 2px 4px rgba(0,0,0,0.06)',
-                            display: 'flex',
-                            alignItems: 'center',
-                            gap: '4px',
-                          }}
-                        >
-                          {isPublished ? <Globe size={11} /> : <Lock size={11} />}
-                          {isPublished ? 'Published' : 'Private'}
-                        </span>
-                      </div>
-
-                      <div style={{ padding: '16px' }}>
-                        <h4 style={{ fontSize: '15px', fontWeight: 600, marginBottom: '4px' }}>
-                          {prod.name}
-                        </h4>
-                        {prod.description && (
-                          <p
-                            style={{
-                              fontSize: '12px',
-                              color: 'var(--text-muted)',
-                              lineHeight: 1.4,
-                              marginBottom: '8px',
-                            }}
-                          >
-                            {prod.description}
-                          </p>
-                        )}
-                        <div style={{ display: 'flex', alignItems: 'baseline', gap: '6px' }}>
-                          <span style={{ fontSize: '17px', fontWeight: 700 }}>₹{prod.price}</span>
-                          {prod.salePrice && prod.salePrice < prod.price && (
-                            <span
-                              style={{
-                                fontSize: '12px',
-                                textDecoration: 'line-through',
-                                color: 'var(--text-faint)',
-                              }}
-                            >
-                              ₹{prod.salePrice}
-                            </span>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-
-                    <div
-                      style={{
-                        padding: '12px 16px',
-                        borderTop: '1px solid var(--border-subtle)',
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'space-between',
-                        gap: '6px',
-                        flexWrap: 'wrap',
-                      }}
-                    >
-                      {/* One-click publish toggle */}
-                      <button
-                        onClick={() => handleTogglePublishProduct(prod.id)}
-                        className="btn btn-outline-soft"
-                        style={{
-                          fontSize: '11px',
-                          padding: '5px 10px',
-                          color: isPublished ? '#b45309' : '#15803d',
-                          borderColor: isPublished ? '#fde68a' : '#bbf7d0',
-                          backgroundColor: isPublished ? '#fffbeb' : '#f0fdf4',
-                        }}
-                        title={
-                          isPublished
-                            ? 'Unpublish and hide from customer website'
-                            : 'Publish and make visible on customer website'
-                        }
-                      >
-                        {isPublished ? <EyeOff size={12} /> : <Eye size={12} />}
-                        <span>{isPublished ? 'Unpublish' : 'Publish'}</span>
-                      </button>
-
-                      <div style={{ display: 'flex', gap: '6px' }}>
-                        <button
-                          onClick={() => setEditingProduct(prod)}
-                          className="btn btn-outline-soft"
-                          style={{ padding: '5px 8px', fontSize: '12px' }}
-                          title="Edit product"
-                        >
-                          <Edit2 size={13} />
-                        </button>
-                        <button
-                          onClick={() => setProductToDelete(prod)}
-                          className="btn btn-outline-soft"
-                          style={{ padding: '5px 8px', fontSize: '12px', color: '#b91c1c' }}
-                          title="Delete product"
-                        >
-                          <Trash2 size={13} />
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* TAB 3: GUIDES & TASKS MANAGEMENT (OPTIONAL DESCRIPTIONS) */}
+      {/* TAB 1: PRINTING TASKS & GUIDES */}
       {activeTab === 'guides' && (
         <div
           style={{
@@ -1013,12 +769,17 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                 marginBottom: '16px',
               }}
             >
-              <h2 style={{ fontSize: '18px', fontWeight: 600 }}>Printing Tasks ({guides.length})</h2>
+              <div>
+                <h2 style={{ fontSize: '18px', fontWeight: 600 }}>Printing Tasks ({guides.length})</h2>
+                <p style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
+                  Numbered instructions shown on the shop PC
+                </p>
+              </div>
               <button
                 onClick={() => {
                   setNewGuideTitle('');
                   setNewGuideDesc('');
-                  setNewGuideCat('WhatsApp');
+                  setNewGuideCat(printingCategories[0]?.name || 'WhatsApp');
                   setNewGuideIcon('Printer');
                   setIsAddingGuide(true);
                 }}
@@ -1030,96 +791,153 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
               </button>
             </div>
 
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-              {guides.map((guide, idx) => {
-                const isSelected = selectedGuide?.id === guide.id;
-                return (
-                  <div
-                    key={guide.id}
-                    onClick={() => setSelectedGuideId(guide.id)}
-                    style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'space-between',
-                      padding: '14px 16px',
-                      borderRadius: '16px',
-                      border: isSelected
-                        ? '2px solid var(--primary)'
-                        : '1px solid var(--border-card)',
-                      backgroundColor: isSelected ? 'var(--primary-light)' : '#ffffff',
-                      cursor: 'pointer',
-                      transition: 'all 0.15s ease',
-                    }}
-                  >
-                    <div style={{ flex: 1, minWidth: 0, paddingRight: '12px' }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '4px' }}>
-                        <span className="guide-cat-badge" style={{ fontSize: '10px', padding: '2px 8px' }}>
-                          {guide.category}
-                        </span>
-                        <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
-                          {guide.steps.length} steps
-                        </span>
-                      </div>
-                      <div
-                        style={{
-                          fontSize: '14px',
-                          fontWeight: 600,
-                          color: 'var(--text-main)',
-                          whiteSpace: 'nowrap',
-                          overflow: 'hidden',
-                          textOverflow: 'ellipsis',
-                        }}
-                      >
-                        {guide.title}
-                      </div>
-                    </div>
+            {/* Filter and Search Bar */}
+            <div style={{ display: 'flex', gap: '8px', marginBottom: '12px' }}>
+              <div className="search-box" style={{ flex: 1 }}>
+                <Search size={14} className="search-icon" />
+                <input
+                  type="text"
+                  placeholder="Filter tasks..."
+                  value={guideSearch}
+                  onChange={(e) => setGuideSearch(e.target.value)}
+                  style={{ fontSize: '12px', padding: '6px 10px 6px 30px' }}
+                />
+              </div>
 
-                    <div style={{ display: 'flex', gap: '4px' }} onClick={(e) => e.stopPropagation()}>
-                      <button
-                        onClick={() => handleMoveGuide(idx, 'up')}
-                        disabled={idx === 0}
-                        className="btn btn-outline-soft"
-                        style={{ padding: '4px 6px' }}
-                        title="Move Up"
-                      >
-                        <ArrowUp size={13} />
-                      </button>
-                      <button
-                        onClick={() => handleMoveGuide(idx, 'down')}
-                        disabled={idx === guides.length - 1}
-                        className="btn btn-outline-soft"
-                        style={{ padding: '4px 6px' }}
-                        title="Move Down"
-                      >
-                        <ArrowDown size={13} />
-                      </button>
-                      <button
-                        onClick={() => setEditingGuide(guide)}
-                        className="btn btn-outline-soft"
-                        style={{ padding: '4px 6px' }}
-                        title="Edit Guide"
-                      >
-                        <Edit2 size={13} />
-                      </button>
-                      <button
-                        onClick={() => setGuideToDelete(guide)}
-                        className="btn btn-outline-soft"
-                        style={{ padding: '4px 6px', color: '#b91c1c' }}
-                        title="Delete Guide"
-                        disabled={guides.length <= 1}
-                      >
-                        <Trash2 size={13} />
-                      </button>
-                    </div>
-                  </div>
-                );
-              })}
+              <select
+                value={guideFilterCat}
+                onChange={(e) => setGuideFilterCat(e.target.value)}
+                className="form-select"
+                style={{ width: 'auto', fontSize: '12px', padding: '6px 10px' }}
+              >
+                <option value="all">All Categories</option>
+                {printingCategories.map((c) => (
+                  <option key={c.id} value={c.name}>
+                    {c.name}
+                  </option>
+                ))}
+              </select>
             </div>
+
+            {guides.length === 0 ? (
+              <div
+                style={{
+                  padding: '30px',
+                  textAlign: 'center',
+                  backgroundColor: '#ffffff',
+                  borderRadius: '16px',
+                  border: '1px dashed var(--border-medium)',
+                }}
+              >
+                <p style={{ fontSize: '14px', color: 'var(--text-muted)' }}>
+                  No printing tasks exist. Click &ldquo;Add Task&rdquo; above to create one.
+                </p>
+              </div>
+            ) : filteredGuides.length === 0 ? (
+              <div
+                style={{
+                  padding: '24px',
+                  textAlign: 'center',
+                  backgroundColor: '#ffffff',
+                  borderRadius: '16px',
+                  border: '1px dashed var(--border-medium)',
+                }}
+              >
+                <p style={{ fontSize: '13px', color: 'var(--text-muted)' }}>
+                  No tasks match &ldquo;{guideSearch}&rdquo;.
+                </p>
+              </div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                {filteredGuides.map((guide, idx) => {
+                  const isSelected = selectedGuide?.id === guide.id;
+                  return (
+                    <div
+                      key={guide.id}
+                      onClick={() => setSelectedGuideId(guide.id)}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        padding: '14px 16px',
+                        borderRadius: '16px',
+                        border: isSelected
+                          ? '2px solid var(--primary)'
+                          : '1px solid var(--border-card)',
+                        backgroundColor: isSelected ? 'var(--primary-light)' : '#ffffff',
+                        cursor: 'pointer',
+                        transition: 'all 0.15s ease',
+                      }}
+                    >
+                      <div style={{ flex: 1, minWidth: 0, paddingRight: '12px' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '4px' }}>
+                          <span className="guide-cat-badge" style={{ fontSize: '10px', padding: '2px 8px' }}>
+                            {guide.category}
+                          </span>
+                          <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
+                            {guide.steps.length} steps
+                          </span>
+                        </div>
+                        <div
+                          style={{
+                            fontSize: '14px',
+                            fontWeight: 600,
+                            color: 'var(--text-main)',
+                            whiteSpace: 'nowrap',
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis',
+                          }}
+                        >
+                          {guide.title}
+                        </div>
+                      </div>
+
+                      <div style={{ display: 'flex', gap: '4px' }} onClick={(e) => e.stopPropagation()}>
+                        <button
+                          onClick={() => handleMoveGuide(idx, 'up')}
+                          disabled={idx === 0}
+                          className="btn btn-outline-soft"
+                          style={{ padding: '4px 6px' }}
+                          title="Move Up"
+                        >
+                          <ArrowUp size={13} />
+                        </button>
+                        <button
+                          onClick={() => handleMoveGuide(idx, 'down')}
+                          disabled={idx === guides.length - 1}
+                          className="btn btn-outline-soft"
+                          style={{ padding: '4px 6px' }}
+                          title="Move Down"
+                        >
+                          <ArrowDown size={13} />
+                        </button>
+                        <button
+                          onClick={() => setEditingGuide(guide)}
+                          className="btn btn-outline-soft"
+                          style={{ padding: '4px 6px' }}
+                          title="Edit Task"
+                        >
+                          <Edit2 size={13} />
+                        </button>
+                        <button
+                          onClick={() => setGuideToDelete(guide)}
+                          className="btn btn-outline-soft"
+                          style={{ padding: '4px 6px', color: '#b91c1c' }}
+                          title="Delete Task"
+                        >
+                          <Trash2 size={13} />
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
           </div>
 
           {/* Right Column: Steps for Selected Guide */}
           <div>
-            {selectedGuide && (
+            {selectedGuide ? (
               <div
                 style={{
                   backgroundColor: '#ffffff',
@@ -1155,138 +973,1145 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                     className="btn btn-outline-soft"
                     style={{ padding: '6px 12px', fontSize: '12px' }}
                   >
-                    <Edit2 size={12} />
-                    <span>Edit</span>
+                    <Edit2 size={13} />
+                    <span>Edit Task</span>
                   </button>
                 </div>
 
+                {/* Steps List */}
+                <div style={{ marginBottom: '20px' }}>
+                  <div
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      marginBottom: '10px',
+                    }}
+                  >
+                    <h4 style={{ fontSize: '14px', fontWeight: 600 }}>
+                      Numbered Steps ({selectedGuide.steps.length})
+                    </h4>
+                    <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
+                      Click arrows to reorder
+                    </span>
+                  </div>
+
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                    {selectedGuide.steps.map((step, sIdx) => (
+                      <div
+                        key={step.id}
+                        style={{
+                          display: 'flex',
+                          alignItems: 'flex-start',
+                          justifyContent: 'space-between',
+                          padding: '12px',
+                          borderRadius: '12px',
+                          backgroundColor: 'var(--bg-pill)',
+                          gap: '10px',
+                        }}
+                      >
+                        <div style={{ display: 'flex', gap: '10px', flex: 1, minWidth: 0 }}>
+                          <span
+                            style={{
+                              width: '22px',
+                              height: '22px',
+                              borderRadius: '50%',
+                              backgroundColor: 'var(--primary)',
+                              color: '#ffffff',
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              fontSize: '11px',
+                              fontWeight: 700,
+                              flexShrink: 0,
+                            }}
+                          >
+                            {sIdx + 1}
+                          </span>
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <div style={{ fontSize: '13px', color: 'var(--text-main)', lineHeight: 1.4 }}>
+                              {step.instruction}
+                            </div>
+                            {step.description && step.description.trim() ? (
+                              <div
+                                style={{
+                                  fontSize: '12px',
+                                  color: 'var(--text-muted)',
+                                  marginTop: '2px',
+                                  fontStyle: 'italic',
+                                }}
+                              >
+                                Tip: {step.description}
+                              </div>
+                            ) : null}
+                          </div>
+                        </div>
+
+                        <div style={{ display: 'flex', gap: '4px', flexShrink: 0 }}>
+                          <button
+                            onClick={() => handleMoveStep(sIdx, 'up')}
+                            disabled={sIdx === 0}
+                            className="btn btn-outline-soft"
+                            style={{ padding: '3px 5px' }}
+                            title="Move step up"
+                          >
+                            <ArrowUp size={12} />
+                          </button>
+                          <button
+                            onClick={() => handleMoveStep(sIdx, 'down')}
+                            disabled={sIdx === selectedGuide.steps.length - 1}
+                            className="btn btn-outline-soft"
+                            style={{ padding: '3px 5px' }}
+                            title="Move step down"
+                          >
+                            <ArrowDown size={12} />
+                          </button>
+                          <button
+                            onClick={() => setEditingStep(step)}
+                            className="btn btn-outline-soft"
+                            style={{ padding: '3px 5px' }}
+                            title="Edit step"
+                          >
+                            <Edit2 size={12} />
+                          </button>
+                          <button
+                            onClick={() =>
+                              setStepToDelete({
+                                guideId: selectedGuide.id,
+                                stepId: step.id,
+                              })
+                            }
+                            className="btn btn-outline-soft"
+                            style={{ padding: '3px 5px', color: '#b91c1c' }}
+                            title="Delete step"
+                            disabled={selectedGuide.steps.length <= 1}
+                          >
+                            <Trash2 size={12} />
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
                 {/* Add Step Form */}
-                <form onSubmit={handleAddStep} style={{ marginBottom: '20px' }}>
+                <form
+                  onSubmit={handleAddStep}
+                  style={{
+                    backgroundColor: 'var(--primary-light)',
+                    padding: '16px',
+                    borderRadius: '14px',
+                    border: '1px solid var(--border-card)',
+                  }}
+                >
+                  <h5 style={{ fontSize: '13px', fontWeight: 600, marginBottom: '8px' }}>
+                    + Add New Numbered Step
+                  </h5>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                     <input
                       type="text"
                       required
                       value={newStepText}
                       onChange={(e) => setNewStepText(e.target.value)}
-                      placeholder="Step instruction (Required)..."
+                      placeholder="e.g. Select glossy photo paper from Tray 2"
                       className="form-input"
+                      style={{ backgroundColor: '#ffffff', fontSize: '13px' }}
                     />
-                    <div style={{ display: 'flex', gap: '8px' }}>
-                      <input
-                        type="text"
-                        value={newStepDesc}
-                        onChange={(e) => setNewStepDesc(e.target.value)}
-                        placeholder="Description / tip (Optional)..."
-                        className="form-input"
-                      />
-                      <button type="submit" className="btn btn-primary" style={{ flexShrink: 0 }}>
-                        <Plus size={14} />
-                        <span>Add Step</span>
+                    <input
+                      type="text"
+                      value={newStepDesc}
+                      onChange={(e) => setNewStepDesc(e.target.value)}
+                      placeholder="Description / Tip (Optional)"
+                      className="form-input"
+                      style={{ backgroundColor: '#ffffff', fontSize: '13px' }}
+                    />
+                    <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '4px' }}>
+                      <button
+                        type="submit"
+                        className="btn btn-primary"
+                        style={{ padding: '6px 14px', fontSize: '12px' }}
+                      >
+                        Add Step
                       </button>
                     </div>
                   </div>
                 </form>
-
-                {/* Numbered Steps */}
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                  {selectedGuide.steps.map((step, idx) => (
-                    <div
-                      key={step.id}
-                      style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: '10px',
-                        padding: '12px 14px',
-                        borderRadius: '12px',
-                        backgroundColor: '#faf7fd',
-                        border: '1px solid var(--border-subtle)',
-                      }}
-                    >
-                      <span
-                        style={{
-                          width: '24px',
-                          height: '24px',
-                          borderRadius: '50%',
-                          backgroundColor: 'var(--primary-light)',
-                          color: 'var(--primary)',
-                          fontSize: '12px',
-                          fontWeight: 700,
-                          display: 'flex',
-                          alignItems: 'center',
-                          justifyContent: 'center',
-                          flexShrink: 0,
-                        }}
-                      >
-                        {idx + 1}
-                      </span>
-                      <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ fontSize: '14px', fontWeight: 500, color: 'var(--text-main)' }}>
-                          {step.instruction}
-                        </div>
-                        {(step.description || step.note) && (
-                          <div
-                            style={{
-                              fontSize: '12px',
-                              color: 'var(--text-muted)',
-                              marginTop: '2px',
-                              lineHeight: 1.35,
-                            }}
-                          >
-                            {step.description || step.note}
-                          </div>
-                        )}
-                      </div>
-                      <div style={{ display: 'flex', gap: '4px' }}>
-                        <button
-                          onClick={() => handleMoveStep(idx, 'up')}
-                          disabled={idx === 0}
-                          className="btn btn-outline-soft"
-                          style={{ padding: '4px 6px' }}
-                        >
-                          <ArrowUp size={12} />
-                        </button>
-                        <button
-                          onClick={() => handleMoveStep(idx, 'down')}
-                          disabled={idx === selectedGuide.steps.length - 1}
-                          className="btn btn-outline-soft"
-                          style={{ padding: '4px 6px' }}
-                        >
-                          <ArrowDown size={12} />
-                        </button>
-                        <button
-                          onClick={() => setEditingStep(step)}
-                          className="btn btn-outline-soft"
-                          style={{ padding: '4px 6px' }}
-                        >
-                          <Edit2 size={12} />
-                        </button>
-                        <button
-                          onClick={() =>
-                            setStepToDelete({
-                              guideId: selectedGuide.id,
-                              stepId: step.id,
-                            })
-                          }
-                          className="btn btn-outline-soft"
-                          style={{ padding: '4px 6px', color: '#b91c1c' }}
-                        >
-                          <Trash2 size={12} />
-                        </button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
+              </div>
+            ) : (
+              <div
+                style={{
+                  backgroundColor: '#ffffff',
+                  border: '1px solid var(--border-card)',
+                  borderRadius: '20px',
+                  padding: '30px',
+                  textAlign: 'center',
+                }}
+              >
+                <p style={{ color: 'var(--text-muted)' }}>
+                  Select or create a printing task to view and edit its numbered steps.
+                </p>
               </div>
             )}
           </div>
         </div>
       )}
 
-      {/* ================================================= */}
-      {/* MODALS */}
-      {/* ================================================= */}
+      {/* TAB 2: PRINTING CATEGORIES MANAGEMENT */}
+      {activeTab === 'printing_categories' && (
+        <div>
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              marginBottom: '20px',
+              flexWrap: 'wrap',
+              gap: '12px',
+            }}
+          >
+            <div>
+              <h2 style={{ fontSize: '20px', fontWeight: 600 }}>Printing Categories ({printingCategories.length})</h2>
+              <p style={{ fontSize: '13px', color: 'var(--text-muted)', marginTop: '2px' }}>
+                Categories organize your printing guides and show as filter pills on the customer homepage.
+              </p>
+            </div>
 
-      {/* ADD CATEGORY MODAL */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+              <div className="search-box">
+                <Search size={14} className="search-icon" />
+                <input
+                  type="text"
+                  placeholder="Search printing categories..."
+                  value={pcatSearch}
+                  onChange={(e) => setPcatSearch(e.target.value)}
+                  style={{ fontSize: '13px' }}
+                />
+              </div>
+
+              <button
+                onClick={() => {
+                  setNewPcatName('');
+                  setNewPcatDesc('');
+                  setNewPcatIcon('Printer');
+                  setNewPcatColor('lavender');
+                  setIsAddingPcat(true);
+                }}
+                className="btn btn-primary"
+              >
+                <Plus size={16} />
+                <span>Add Printing Category</span>
+              </button>
+            </div>
+          </div>
+
+          <div
+            style={{
+              display: 'grid',
+              gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))',
+              gap: '16px',
+            }}
+          >
+            {filteredPrintingCategories.map((pcat) => {
+              const guideCount = guides.filter((g) => g.category === pcat.name).length;
+              return (
+                <div
+                  key={pcat.id}
+                  style={{
+                    backgroundColor: '#ffffff',
+                    border: '1px solid var(--border-card)',
+                    borderRadius: '16px',
+                    padding: '20px',
+                    boxShadow: 'var(--shadow-sm)',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    justifyContent: 'space-between',
+                    gap: '14px',
+                  }}
+                >
+                  <div>
+                    <div
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        marginBottom: '8px',
+                      }}
+                    >
+                      <span className="guide-cat-badge" style={{ fontSize: '11px' }}>
+                        {pcat.name}
+                      </span>
+                      <span
+                        style={{
+                          fontSize: '12px',
+                          color: 'var(--text-muted)',
+                          fontWeight: 500,
+                        }}
+                      >
+                        {guideCount} {guideCount === 1 ? 'task' : 'tasks'}
+                      </span>
+                    </div>
+
+                    <h3 style={{ fontSize: '16px', fontWeight: 600, color: 'var(--text-main)' }}>
+                      {pcat.name}
+                    </h3>
+
+                    {pcat.description && (
+                      <p
+                        style={{
+                          fontSize: '13px',
+                          color: 'var(--text-muted)',
+                          marginTop: '6px',
+                          lineHeight: 1.4,
+                        }}
+                      >
+                        {pcat.description}
+                      </p>
+                    )}
+                  </div>
+
+                  <div
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'flex-end',
+                      gap: '8px',
+                      paddingTop: '12px',
+                      borderTop: '1px solid var(--border-subtle)',
+                    }}
+                  >
+                    <button
+                      onClick={() => setEditingPcat(pcat)}
+                      className="btn btn-outline-soft"
+                      style={{ padding: '6px 12px', fontSize: '12px' }}
+                    >
+                      <Edit2 size={13} />
+                      <span>Edit</span>
+                    </button>
+                    <button
+                      onClick={() => setPcatToDelete(pcat)}
+                      className="btn btn-outline-soft"
+                      style={{ padding: '6px 12px', fontSize: '12px', color: '#b91c1c' }}
+                    >
+                      <Trash2 size={13} />
+                      <span>Delete</span>
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* TAB 3: STATIONERY PRODUCTS MANAGEMENT */}
+      {activeTab === 'products' && (
+        <div>
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              marginBottom: '20px',
+              flexWrap: 'wrap',
+              gap: '12px',
+            }}
+          >
+            <div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <h2 style={{ fontSize: '20px', fontWeight: 600 }}>Stationery Inventory ({products.length})</h2>
+                <span
+                  style={{
+                    fontSize: '11px',
+                    fontWeight: 600,
+                    backgroundColor: '#fef3c7',
+                    color: '#92400e',
+                    padding: '2px 8px',
+                    borderRadius: '9999px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '4px',
+                  }}
+                >
+                  <Lock size={11} />
+                  Private by Default
+                </span>
+              </div>
+              <p style={{ fontSize: '13px', color: 'var(--text-muted)', marginTop: '2px' }}>
+                Manage items, prices, and stock. Products remain private to the admin until published.
+              </p>
+            </div>
+
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+              <div className="search-box">
+                <Search size={14} className="search-icon" />
+                <input
+                  type="text"
+                  placeholder="Search products..."
+                  value={prodSearch}
+                  onChange={(e) => setProdSearch(e.target.value)}
+                  style={{ fontSize: '13px' }}
+                />
+              </div>
+
+              <select
+                value={prodFilterVisibility}
+                onChange={(e) => setProdFilterVisibility(e.target.value)}
+                className="form-select"
+                style={{ width: 'auto', fontSize: '13px' }}
+              >
+                <option value="all">All Visibility</option>
+                <option value="private">🔒 Private Only</option>
+                <option value="published">🌐 Published Only</option>
+              </select>
+
+              <select
+                value={prodFilterCat}
+                onChange={(e) => setProdFilterCat(e.target.value)}
+                className="form-select"
+                style={{ width: 'auto', fontSize: '13px' }}
+              >
+                <option value="all">All Categories</option>
+                {categories.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.icon ? `${c.icon} ` : ''}
+                    {c.name}
+                  </option>
+                ))}
+              </select>
+
+              <button onClick={() => handleOpenAddProduct()} className="btn btn-primary">
+                <Plus size={16} />
+                <span>Add Product</span>
+              </button>
+            </div>
+          </div>
+
+          <div
+            style={{
+              display: 'grid',
+              gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))',
+              gap: '16px',
+            }}
+          >
+            {filteredProducts.map((prod) => {
+              const cat = categories.find((c) => c.id === prod.categoryId);
+              const isPublished = prod.visibility === 'published';
+              return (
+                <div
+                  key={prod.id}
+                  style={{
+                    backgroundColor: '#ffffff',
+                    border: '1px solid var(--border-card)',
+                    borderRadius: '16px',
+                    padding: '16px',
+                    boxShadow: 'var(--shadow-sm)',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    justifyContent: 'space-between',
+                    gap: '12px',
+                  }}
+                >
+                  <div>
+                    <div
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        marginBottom: '8px',
+                      }}
+                    >
+                      <span
+                        style={{
+                          fontSize: '11px',
+                          fontWeight: 600,
+                          padding: '3px 8px',
+                          borderRadius: '9999px',
+                          backgroundColor: isPublished ? '#dcfce7' : '#f3f4f6',
+                          color: isPublished ? '#15803d' : '#4b5563',
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '4px',
+                        }}
+                      >
+                        {isPublished ? <Globe size={11} /> : <Lock size={11} />}
+                        {isPublished ? 'Published' : 'Private'}
+                      </span>
+
+                      {cat && (
+                        <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
+                          {cat.icon ? `${cat.icon} ` : ''}
+                          {cat.name}
+                        </span>
+                      )}
+                    </div>
+
+                    <h4 style={{ fontSize: '15px', fontWeight: 600, color: 'var(--text-main)' }}>
+                      {prod.name}
+                    </h4>
+
+                    {prod.description && (
+                      <p
+                        style={{
+                          fontSize: '12px',
+                          color: 'var(--text-muted)',
+                          marginTop: '4px',
+                          lineHeight: 1.4,
+                        }}
+                      >
+                        {prod.description}
+                      </p>
+                    )}
+
+                    <div
+                      style={{
+                        marginTop: '10px',
+                        display: 'flex',
+                        alignItems: 'baseline',
+                        gap: '8px',
+                      }}
+                    >
+                      <span style={{ fontSize: '16px', fontWeight: 700, color: 'var(--primary)' }}>
+                        ₹{prod.salePrice ?? prod.price}
+                      </span>
+                      {prod.salePrice && (
+                        <span
+                          style={{
+                            fontSize: '13px',
+                            color: 'var(--text-muted)',
+                            textDecoration: 'line-through',
+                          }}
+                        >
+                          ₹{prod.price}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+
+                  <div
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      paddingTop: '10px',
+                      borderTop: '1px solid var(--border-subtle)',
+                    }}
+                  >
+                    <button
+                      onClick={() => handleTogglePublishProduct(prod.id)}
+                      className="btn btn-outline-soft"
+                      style={{
+                        padding: '4px 10px',
+                        fontSize: '11px',
+                        color: isPublished ? '#b91c1c' : '#15803d',
+                      }}
+                    >
+                      {isPublished ? <EyeOff size={12} /> : <Eye size={12} />}
+                      <span>{isPublished ? 'Unpublish' : 'Publish'}</span>
+                    </button>
+
+                    <div style={{ display: 'flex', gap: '4px' }}>
+                      <button
+                        onClick={() => setEditingProduct(prod)}
+                        className="btn btn-outline-soft"
+                        style={{ padding: '4px 8px' }}
+                      >
+                        <Edit2 size={12} />
+                      </button>
+                      <button
+                        onClick={() => setProductToDelete(prod)}
+                        className="btn btn-outline-soft"
+                        style={{ padding: '4px 8px', color: '#b91c1c' }}
+                      >
+                        <Trash2 size={12} />
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* TAB 4: STATIONERY CATEGORIES MANAGEMENT */}
+      {activeTab === 'categories' && (
+        <div>
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              marginBottom: '20px',
+              flexWrap: 'wrap',
+              gap: '12px',
+            }}
+          >
+            <div>
+              <h2 style={{ fontSize: '20px', fontWeight: 600 }}>Stationery Categories ({categories.length})</h2>
+              <p style={{ fontSize: '13px', color: 'var(--text-muted)', marginTop: '2px' }}>
+                Categories for sorting shop stationery and supplies inventory.
+              </p>
+            </div>
+
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+              <div className="search-box">
+                <Search size={14} className="search-icon" />
+                <input
+                  type="text"
+                  placeholder="Search stationery categories..."
+                  value={catSearch}
+                  onChange={(e) => setCatSearch(e.target.value)}
+                  style={{ fontSize: '13px' }}
+                />
+              </div>
+
+              <button
+                onClick={() => {
+                  setNewCatName('');
+                  setNewCatDesc('');
+                  setNewCatIcon('📦');
+                  setNewCatColor('lavender');
+                  setIsAddingCategory(true);
+                }}
+                className="btn btn-primary"
+              >
+                <Plus size={16} />
+                <span>Add Stationery Category</span>
+              </button>
+            </div>
+          </div>
+
+          <div
+            style={{
+              display: 'grid',
+              gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))',
+              gap: '16px',
+            }}
+          >
+            {filteredCategories.map((cat) => {
+              const prodCount = products.filter((p) => p.categoryId === cat.id).length;
+              return (
+                <div
+                  key={cat.id}
+                  style={{
+                    backgroundColor: '#ffffff',
+                    border: '1px solid var(--border-card)',
+                    borderRadius: '16px',
+                    padding: '20px',
+                    boxShadow: 'var(--shadow-sm)',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    justifyContent: 'space-between',
+                    gap: '14px',
+                  }}
+                >
+                  <div>
+                    <div
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        marginBottom: '8px',
+                      }}
+                    >
+                      <span style={{ fontSize: '24px' }}>{cat.icon || '📦'}</span>
+                      <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
+                        {prodCount} products
+                      </span>
+                    </div>
+
+                    <h3 style={{ fontSize: '16px', fontWeight: 600, color: 'var(--text-main)' }}>
+                      {cat.name}
+                    </h3>
+
+                    {cat.description && (
+                      <p
+                        style={{
+                          fontSize: '13px',
+                          color: 'var(--text-muted)',
+                          marginTop: '6px',
+                          lineHeight: 1.4,
+                        }}
+                      >
+                        {cat.description}
+                      </p>
+                    )}
+                  </div>
+
+                  <div
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'flex-end',
+                      gap: '8px',
+                      paddingTop: '12px',
+                      borderTop: '1px solid var(--border-subtle)',
+                    }}
+                  >
+                    <button
+                      onClick={() => setEditingCategory(cat)}
+                      className="btn btn-outline-soft"
+                      style={{ padding: '6px 12px', fontSize: '12px' }}
+                    >
+                      <Edit2 size={13} />
+                      <span>Edit</span>
+                    </button>
+                    <button
+                      onClick={() => setCategoryToDelete(cat)}
+                      className="btn btn-outline-soft"
+                      style={{ padding: '6px 12px', fontSize: '12px', color: '#b91c1c' }}
+                    >
+                      <Trash2 size={13} />
+                      <span>Delete</span>
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* ==========================================
+          MODALS FOR ALL ACTIONS
+         ========================================== */}
+
+      {/* ADD PRINTING CATEGORY MODAL */}
+      <AnimatePresence>
+        {isAddingPcat && (
+          <div className="modal-overlay" onClick={() => setIsAddingPcat(false)}>
+            <motion.div
+              initial={{ opacity: 0, scale: 0.94 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.94 }}
+              className="modal-card"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="modal-header">
+                <h3>Add Printing Category</h3>
+                <button onClick={() => setIsAddingPcat(false)} className="modal-close-btn">
+                  <X size={16} />
+                </button>
+              </div>
+
+              <form onSubmit={handleCreatePrintingCategory} style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+                <div className="form-group">
+                  <label className="form-label">Category Name *</label>
+                  <input
+                    type="text"
+                    required
+                    value={newPcatName}
+                    onChange={(e) => setNewPcatName(e.target.value)}
+                    placeholder="e.g. Passport Photos, Lamination, Aadhaar Services"
+                    className="form-input"
+                  />
+                </div>
+
+                <div className="form-group">
+                  <label className="form-label">Description (Optional)</label>
+                  <textarea
+                    rows={2}
+                    value={newPcatDesc}
+                    onChange={(e) => setNewPcatDesc(e.target.value)}
+                    placeholder="Brief description for customer guides in this category"
+                    className="form-textarea"
+                  />
+                </div>
+
+                <div className="form-group">
+                  <label className="form-label">Pastel Accent</label>
+                  <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                    {PASTEL_COLORS.map((col) => (
+                      <button
+                        type="button"
+                        key={col.value}
+                        onClick={() => setNewPcatColor(col.value)}
+                        style={{
+                          backgroundColor: col.bg,
+                          border:
+                            newPcatColor === col.value
+                              ? '2px solid var(--primary)'
+                              : `1px solid ${col.border}`,
+                          padding: '6px 12px',
+                          borderRadius: '9999px',
+                          fontSize: '12px',
+                          fontWeight: 600,
+                          cursor: 'pointer',
+                        }}
+                      >
+                        {col.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '10px' }}>
+                  <button type="button" onClick={() => setIsAddingPcat(false)} className="btn btn-outline-soft">
+                    Cancel
+                  </button>
+                  <button type="submit" className="btn btn-primary">
+                    Create Category
+                  </button>
+                </div>
+              </form>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* EDIT PRINTING CATEGORY MODAL */}
+      <AnimatePresence>
+        {editingPcat && (
+          <div className="modal-overlay" onClick={() => setEditingPcat(null)}>
+            <motion.div
+              initial={{ opacity: 0, scale: 0.94 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.94 }}
+              className="modal-card"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="modal-header">
+                <h3>Edit Printing Category</h3>
+                <button onClick={() => setEditingPcat(null)} className="modal-close-btn">
+                  <X size={16} />
+                </button>
+              </div>
+
+              <form onSubmit={handleSavePrintingCategoryEdit} style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+                <div className="form-group">
+                  <label className="form-label">Category Name *</label>
+                  <input
+                    type="text"
+                    required
+                    value={editingPcat.name}
+                    onChange={(e) => setEditingPcat({ ...editingPcat, name: e.target.value })}
+                    className="form-input"
+                  />
+                </div>
+
+                <div className="form-group">
+                  <label className="form-label">Description (Optional)</label>
+                  <textarea
+                    rows={2}
+                    value={editingPcat.description || ''}
+                    onChange={(e) => setEditingPcat({ ...editingPcat, description: e.target.value })}
+                    className="form-textarea"
+                  />
+                </div>
+
+                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '10px' }}>
+                  <button type="button" onClick={() => setEditingPcat(null)} className="btn btn-outline-soft">
+                    Cancel
+                  </button>
+                  <button type="submit" className="btn btn-primary">
+                    <Save size={14} />
+                    <span>Save Changes</span>
+                  </button>
+                </div>
+              </form>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* DELETE PRINTING CATEGORY MODAL */}
+      <AnimatePresence>
+        {pcatToDelete && (
+          <div className="modal-overlay" onClick={() => setPcatToDelete(null)}>
+            <motion.div
+              initial={{ opacity: 0, scale: 0.94 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.94 }}
+              className="modal-card"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="modal-header">
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <AlertTriangle size={18} color="#b91c1c" />
+                  <h3 style={{ color: '#b91c1c' }}>Delete Printing Category?</h3>
+                </div>
+              </div>
+              <p style={{ fontSize: '14px', color: 'var(--text-muted)', lineHeight: 1.5 }}>
+                Are you sure you want to delete category <strong>&ldquo;{pcatToDelete.name}&rdquo;</strong>?
+              </p>
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '16px' }}>
+                <button onClick={() => setPcatToDelete(null)} className="btn btn-outline-soft">
+                  Cancel
+                </button>
+                <button onClick={handleConfirmDeletePrintingCategory} className="btn btn-danger">
+                  Delete Category
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* ADD GUIDE / TASK MODAL */}
+      <AnimatePresence>
+        {isAddingGuide && (
+          <div className="modal-overlay" onClick={() => setIsAddingGuide(false)}>
+            <motion.div
+              initial={{ opacity: 0, scale: 0.94 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.94 }}
+              className="modal-card"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="modal-header">
+                <h3>Add New Printing Task</h3>
+                <button onClick={() => setIsAddingGuide(false)} className="modal-close-btn">
+                  <X size={16} />
+                </button>
+              </div>
+
+              <form onSubmit={handleCreateGuide} style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+                <div className="form-group">
+                  <label className="form-label">Task Title *</label>
+                  <input
+                    type="text"
+                    required
+                    value={newGuideTitle}
+                    onChange={(e) => setNewGuideTitle(e.target.value)}
+                    placeholder="e.g. Aadhaar Card Printing, Passport Photo Sheet"
+                    className="form-input"
+                  />
+                </div>
+
+                <div className="form-group">
+                  <label className="form-label">Description (Optional)</label>
+                  <textarea
+                    rows={2}
+                    value={newGuideDesc}
+                    onChange={(e) => setNewGuideDesc(e.target.value)}
+                    placeholder="Optional notes or instructions summary"
+                    className="form-textarea"
+                  />
+                </div>
+
+                <div className="form-group">
+                  <label className="form-label">Category *</label>
+                  <select
+                    value={newGuideCat}
+                    onChange={(e) => setNewGuideCat(e.target.value)}
+                    className="form-select"
+                  >
+                    {printingCategories.map((c) => (
+                      <option key={c.id} value={c.name}>
+                        {c.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '10px' }}>
+                  <button type="button" onClick={() => setIsAddingGuide(false)} className="btn btn-outline-soft">
+                    Cancel
+                  </button>
+                  <button type="submit" className="btn btn-primary">
+                    Create Task
+                  </button>
+                </div>
+              </form>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* EDIT GUIDE / TASK MODAL */}
+      <AnimatePresence>
+        {editingGuide && (
+          <div className="modal-overlay" onClick={() => setEditingGuide(null)}>
+            <motion.div
+              initial={{ opacity: 0, scale: 0.94 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.94 }}
+              className="modal-card"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="modal-header">
+                <h3>Edit Printing Task</h3>
+                <button onClick={() => setEditingGuide(null)} className="modal-close-btn">
+                  <X size={16} />
+                </button>
+              </div>
+
+              <form onSubmit={handleSaveGuideEdit} style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+                <div className="form-group">
+                  <label className="form-label">Task Title *</label>
+                  <input
+                    type="text"
+                    required
+                    value={editingGuide.title}
+                    onChange={(e) => setEditingGuide({ ...editingGuide, title: e.target.value })}
+                    className="form-input"
+                  />
+                </div>
+
+                <div className="form-group">
+                  <label className="form-label">Description (Optional)</label>
+                  <textarea
+                    rows={2}
+                    value={editingGuide.description || ''}
+                    onChange={(e) => setEditingGuide({ ...editingGuide, description: e.target.value })}
+                    placeholder="Leave empty or enter description"
+                    className="form-textarea"
+                  />
+                </div>
+
+                <div className="form-group">
+                  <label className="form-label">Category *</label>
+                  <select
+                    value={editingGuide.category}
+                    onChange={(e) => setEditingGuide({ ...editingGuide, category: e.target.value })}
+                    className="form-select"
+                  >
+                    {printingCategories.map((c) => (
+                      <option key={c.id} value={c.name}>
+                        {c.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '10px' }}>
+                  <button type="button" onClick={() => setEditingGuide(null)} className="btn btn-outline-soft">
+                    Cancel
+                  </button>
+                  <button type="submit" className="btn btn-primary">
+                    <Save size={14} />
+                    <span>Save Changes</span>
+                  </button>
+                </div>
+              </form>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* DELETE GUIDE CONFIRM */}
+      <AnimatePresence>
+        {guideToDelete && (
+          <div className="modal-overlay" onClick={() => setGuideToDelete(null)}>
+            <motion.div
+              initial={{ opacity: 0, scale: 0.94 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.94 }}
+              className="modal-card"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="modal-header">
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <AlertTriangle size={18} color="#b91c1c" />
+                  <h3 style={{ color: '#b91c1c' }}>Delete Task?</h3>
+                </div>
+              </div>
+              <p style={{ fontSize: '14px', color: 'var(--text-muted)', lineHeight: 1.5 }}>
+                Are you sure you want to delete <strong>&ldquo;{guideToDelete.title}&rdquo;</strong>? This task will be removed from the shared central database immediately.
+              </p>
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '16px' }}>
+                <button onClick={() => setGuideToDelete(null)} className="btn btn-outline-soft">
+                  Cancel
+                </button>
+                <button onClick={handleConfirmDeleteGuide} className="btn btn-danger">
+                  Delete Task
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* EDIT STEP MODAL */}
+      <AnimatePresence>
+        {editingStep && (
+          <div className="modal-overlay" onClick={() => setEditingStep(null)}>
+            <motion.div
+              initial={{ opacity: 0, scale: 0.94 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.94 }}
+              className="modal-card"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="modal-header">
+                <h3>Edit Step Instruction</h3>
+                <button onClick={() => setEditingStep(null)} className="modal-close-btn">
+                  <X size={16} />
+                </button>
+              </div>
+
+              <form onSubmit={handleSaveStepEdit} style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+                <div className="form-group">
+                  <label className="form-label">Instruction Text *</label>
+                  <textarea
+                    rows={2}
+                    required
+                    value={editingStep.instruction}
+                    onChange={(e) => setEditingStep({ ...editingStep, instruction: e.target.value })}
+                    className="form-textarea"
+                  />
+                </div>
+
+                <div className="form-group">
+                  <label className="form-label">Description (Optional)</label>
+                  <textarea
+                    rows={2}
+                    value={editingStep.description || ''}
+                    onChange={(e) => setEditingStep({ ...editingStep, description: e.target.value })}
+                    placeholder="Optional tips, notes, or printer tray details"
+                    className="form-textarea"
+                  />
+                </div>
+
+                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
+                  <button type="button" onClick={() => setEditingStep(null)} className="btn btn-outline-soft">
+                    Cancel
+                  </button>
+                  <button type="submit" className="btn btn-primary">
+                    <Save size={14} />
+                    <span>Save Step</span>
+                  </button>
+                </div>
+              </form>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* DELETE STEP CONFIRM */}
+      <AnimatePresence>
+        {stepToDelete && (
+          <div className="modal-overlay" onClick={() => setStepToDelete(null)}>
+            <motion.div
+              initial={{ opacity: 0, scale: 0.94 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.94 }}
+              className="modal-card"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="modal-header">
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <AlertTriangle size={18} color="#b91c1c" />
+                  <h3 style={{ color: '#b91c1c' }}>Delete Step?</h3>
+                </div>
+              </div>
+              <p style={{ fontSize: '14px', color: 'var(--text-muted)' }}>
+                Are you sure you want to remove this step from the printing task?
+              </p>
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '16px' }}>
+                <button onClick={() => setStepToDelete(null)} className="btn btn-outline-soft">
+                  Cancel
+                </button>
+                <button onClick={handleConfirmDeleteStep} className="btn btn-danger">
+                  Delete Step
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* ADD STATIONERY CATEGORY MODAL */}
       <AnimatePresence>
         {isAddingCategory && (
           <div className="modal-overlay" onClick={() => setIsAddingCategory(false)}>
@@ -1298,11 +2123,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
               onClick={(e) => e.stopPropagation()}
             >
               <div className="modal-header">
-                <h3>Add New Category</h3>
-                <button
-                  onClick={() => setIsAddingCategory(false)}
-                  className="modal-close-btn"
-                >
+                <h3>Add Stationery Category</h3>
+                <button onClick={() => setIsAddingCategory(false)} className="modal-close-btn">
                   <X size={16} />
                 </button>
               </div>
@@ -1342,39 +2164,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                   />
                 </div>
 
-                <div className="form-group">
-                  <label className="form-label">Pastel Card Accent</label>
-                  <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-                    {PASTEL_COLORS.map((col) => (
-                      <button
-                        type="button"
-                        key={col.value}
-                        onClick={() => setNewCatColor(col.value)}
-                        style={{
-                          backgroundColor: col.bg,
-                          border:
-                            newCatColor === col.value
-                              ? '2px solid var(--primary)'
-                              : `1px solid ${col.border}`,
-                          padding: '6px 12px',
-                          borderRadius: '9999px',
-                          fontSize: '12px',
-                          fontWeight: 600,
-                          cursor: 'pointer',
-                        }}
-                      >
-                        {col.label}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
                 <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '10px' }}>
-                  <button
-                    type="button"
-                    onClick={() => setIsAddingCategory(false)}
-                    className="btn btn-outline-soft"
-                  >
+                  <button type="button" onClick={() => setIsAddingCategory(false)} className="btn btn-outline-soft">
                     Cancel
                   </button>
                   <button type="submit" className="btn btn-primary">
@@ -1387,7 +2178,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
         )}
       </AnimatePresence>
 
-      {/* EDIT CATEGORY MODAL */}
+      {/* EDIT STATIONERY CATEGORY MODAL */}
       <AnimatePresence>
         {editingCategory && (
           <div className="modal-overlay" onClick={() => setEditingCategory(null)}>
@@ -1399,11 +2190,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
               onClick={(e) => e.stopPropagation()}
             >
               <div className="modal-header">
-                <h3>Edit Category</h3>
-                <button
-                  onClick={() => setEditingCategory(null)}
-                  className="modal-close-btn"
-                >
+                <h3>Edit Stationery Category</h3>
+                <button onClick={() => setEditingCategory(null)} className="modal-close-btn">
                   <X size={16} />
                 </button>
               </div>
@@ -1415,9 +2203,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                     type="text"
                     required
                     value={editingCategory.name}
-                    onChange={(e) =>
-                      setEditingCategory({ ...editingCategory, name: e.target.value })
-                    }
+                    onChange={(e) => setEditingCategory({ ...editingCategory, name: e.target.value })}
                     className="form-input"
                   />
                 </div>
@@ -1427,65 +2213,18 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                   <textarea
                     rows={2}
                     value={editingCategory.description || ''}
-                    onChange={(e) =>
-                      setEditingCategory({ ...editingCategory, description: e.target.value })
-                    }
+                    onChange={(e) => setEditingCategory({ ...editingCategory, description: e.target.value })}
                     className="form-textarea"
                   />
                 </div>
 
-                <div className="form-group">
-                  <label className="form-label">Icon / Emoji</label>
-                  <input
-                    type="text"
-                    value={editingCategory.icon || ''}
-                    onChange={(e) =>
-                      setEditingCategory({ ...editingCategory, icon: e.target.value })
-                    }
-                    className="form-input"
-                  />
-                </div>
-
-                <div className="form-group">
-                  <label className="form-label">Pastel Color</label>
-                  <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-                    {PASTEL_COLORS.map((col) => (
-                      <button
-                        type="button"
-                        key={col.value}
-                        onClick={() =>
-                          setEditingCategory({ ...editingCategory, color: col.value })
-                        }
-                        style={{
-                          backgroundColor: col.bg,
-                          border:
-                            editingCategory.color === col.value
-                              ? '2px solid var(--primary)'
-                              : `1px solid ${col.border}`,
-                          padding: '6px 12px',
-                          borderRadius: '9999px',
-                          fontSize: '12px',
-                          fontWeight: 600,
-                          cursor: 'pointer',
-                        }}
-                      >
-                        {col.label}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
                 <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '10px' }}>
-                  <button
-                    type="button"
-                    onClick={() => setEditingCategory(null)}
-                    className="btn btn-outline-soft"
-                  >
+                  <button type="button" onClick={() => setEditingCategory(null)} className="btn btn-outline-soft">
                     Cancel
                   </button>
                   <button type="submit" className="btn btn-primary">
                     <Save size={14} />
-                    <span>Save Category</span>
+                    <span>Save Changes</span>
                   </button>
                 </div>
               </form>
@@ -1494,7 +2233,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
         )}
       </AnimatePresence>
 
-      {/* DELETE CATEGORY CONFIRM MODAL */}
+      {/* DELETE STATIONERY CATEGORY CONFIRM */}
       <AnimatePresence>
         {categoryToDelete && (
           <div className="modal-overlay" onClick={() => setCategoryToDelete(null)}>
@@ -1512,21 +2251,14 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                 </div>
               </div>
               <p style={{ fontSize: '14px', color: 'var(--text-muted)', lineHeight: 1.5 }}>
-                Are you sure you want to delete <strong>&ldquo;{categoryToDelete.name}&rdquo;</strong>?
-                <br />
-                <span style={{ color: '#b91c1c', fontWeight: 600, display: 'inline-block', marginTop: '6px' }}>
-                  Warning: All {products.filter((p) => p.categoryId === categoryToDelete.id).length} products in this category will also be deleted.
-                </span>
+                Are you sure you want to delete category <strong>&ldquo;{categoryToDelete.name}&rdquo;</strong>?
               </p>
-              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
-                <button
-                  onClick={() => setCategoryToDelete(null)}
-                  className="btn btn-outline-soft"
-                >
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '16px' }}>
+                <button onClick={() => setCategoryToDelete(null)} className="btn btn-outline-soft">
                   Cancel
                 </button>
                 <button onClick={handleConfirmDeleteCategory} className="btn btn-danger">
-                  Delete Category &amp; Products
+                  Delete Category
                 </button>
               </div>
             </motion.div>
@@ -1534,7 +2266,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
         )}
       </AnimatePresence>
 
-      {/* ADD PRODUCT MODAL (PRIVATE BY DEFAULT) */}
+      {/* ADD PRODUCT MODAL */}
       <AnimatePresence>
         {isAddingProduct && (
           <div className="modal-overlay" onClick={() => setIsAddingProduct(false)}>
@@ -1546,11 +2278,11 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
               onClick={(e) => e.stopPropagation()}
             >
               <div className="modal-header">
-                <h3>Add New Product</h3>
-                <button
-                  onClick={() => setIsAddingProduct(false)}
-                  className="modal-close-btn"
-                >
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <Package size={18} />
+                  <h3>Add New Product</h3>
+                </div>
+                <button onClick={() => setIsAddingProduct(false)} className="modal-close-btn">
                   <X size={16} />
                 </button>
               </div>
@@ -1563,7 +2295,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                     required
                     value={newProdName}
                     onChange={(e) => setNewProdName(e.target.value)}
-                    placeholder="e.g. 500 Sheet A4 Copier Paper Bundle"
+                    placeholder="e.g. Deluxe A4 Ruled Register"
                     className="form-input"
                   />
                 </div>
@@ -1585,7 +2317,6 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                   </select>
                 </div>
 
-                {/* Visibility Selection: Private by default */}
                 <div className="form-group">
                   <label className="form-label">Visibility Status *</label>
                   <select
@@ -1596,9 +2327,6 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                     <option value="private">🔒 Private (Admin Only - Default)</option>
                     <option value="published">🌐 Published (Visible to Customers)</option>
                   </select>
-                  <span style={{ fontSize: '11px', color: 'var(--text-faint)' }}>
-                    Private products are only visible inside this admin dashboard.
-                  </span>
                 </div>
 
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
@@ -1610,10 +2338,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                       min="0"
                       step="1"
                       value={newProdPrice}
-                      onChange={(e) =>
-                        setNewProdPrice(e.target.value === '' ? '' : Number(e.target.value))
-                      }
-                      placeholder="e.g. 150"
+                      onChange={(e) => setNewProdPrice(e.target.value === '' ? '' : Number(e.target.value))}
+                      placeholder="0"
                       className="form-input"
                     />
                   </div>
@@ -1625,28 +2351,11 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                       min="0"
                       step="1"
                       value={newProdSalePrice}
-                      onChange={(e) =>
-                        setNewProdSalePrice(
-                          e.target.value === '' ? '' : Number(e.target.value)
-                        )
-                      }
-                      placeholder="e.g. 130"
+                      onChange={(e) => setNewProdSalePrice(e.target.value === '' ? '' : Number(e.target.value))}
+                      placeholder="Optional"
                       className="form-input"
                     />
                   </div>
-                </div>
-
-                <div className="form-group">
-                  <label className="form-label">Availability Status</label>
-                  <select
-                    value={newProdStatus}
-                    onChange={(e) => setNewProdStatus(e.target.value as ProductStatus)}
-                    className="form-select"
-                  >
-                    <option value="in_stock">In Stock</option>
-                    <option value="low_stock">Low Stock</option>
-                    <option value="out_of_stock">Out of Stock</option>
-                  </select>
                 </div>
 
                 <div className="form-group">
@@ -1655,54 +2364,13 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                     rows={2}
                     value={newProdDesc}
                     onChange={(e) => setNewProdDesc(e.target.value)}
-                    placeholder="Product details, brand, gsm, specifications"
+                    placeholder="Product details, specifications"
                     className="form-textarea"
                   />
                 </div>
 
-                <div className="form-group">
-                  <label className="form-label">Product Image (Optional upload)</label>
-                  <input
-                    type="file"
-                    accept="image/*"
-                    onChange={(e) => handleImageFileChange(e.target.files?.[0] || null, 'new')}
-                    className="form-input"
-                  />
-                  {isUploadingImage && (
-                    <span style={{ fontSize: '12px', color: 'var(--primary)' }}>
-                      Compressing image for browser storage...
-                    </span>
-                  )}
-                  {imageUploadError && (
-                    <span style={{ fontSize: '12px', color: '#b91c1c' }}>
-                      {imageUploadError}
-                    </span>
-                  )}
-                  {newProdImage && (
-                    <div style={{ marginTop: '6px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                      <img
-                        src={newProdImage}
-                        alt="Preview"
-                        style={{ width: '48px', height: '48px', borderRadius: '8px', objectFit: 'cover' }}
-                      />
-                      <button
-                        type="button"
-                        onClick={() => setNewProdImage('')}
-                        className="btn btn-outline-soft"
-                        style={{ padding: '4px 8px', fontSize: '11px' }}
-                      >
-                        Remove image
-                      </button>
-                    </div>
-                  )}
-                </div>
-
                 <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '10px' }}>
-                  <button
-                    type="button"
-                    onClick={() => setIsAddingProduct(false)}
-                    className="btn btn-outline-soft"
-                  >
+                  <button type="button" onClick={() => setIsAddingProduct(false)} className="btn btn-outline-soft">
                     Cancel
                   </button>
                   <button type="submit" className="btn btn-primary">
@@ -1728,10 +2396,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
             >
               <div className="modal-header">
                 <h3>Edit Product</h3>
-                <button
-                  onClick={() => setEditingProduct(null)}
-                  className="modal-close-btn"
-                >
+                <button onClick={() => setEditingProduct(null)} className="modal-close-btn">
                   <X size={16} />
                 </button>
               </div>
@@ -1743,9 +2408,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                     type="text"
                     required
                     value={editingProduct.name}
-                    onChange={(e) =>
-                      setEditingProduct({ ...editingProduct, name: e.target.value })
-                    }
+                    onChange={(e) => setEditingProduct({ ...editingProduct, name: e.target.value })}
                     className="form-input"
                   />
                 </div>
@@ -1754,9 +2417,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                   <label className="form-label">Category *</label>
                   <select
                     value={editingProduct.categoryId}
-                    onChange={(e) =>
-                      setEditingProduct({ ...editingProduct, categoryId: e.target.value })
-                    }
+                    onChange={(e) => setEditingProduct({ ...editingProduct, categoryId: e.target.value })}
                     className="form-select"
                     required
                   >
@@ -1769,7 +2430,6 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                   </select>
                 </div>
 
-                {/* Visibility Status */}
                 <div className="form-group">
                   <label className="form-label">Visibility Status *</label>
                   <select
@@ -1796,12 +2456,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                       min="0"
                       step="1"
                       value={editingProduct.price}
-                      onChange={(e) =>
-                        setEditingProduct({
-                          ...editingProduct,
-                          price: Number(e.target.value),
-                        })
-                      }
+                      onChange={(e) => setEditingProduct({ ...editingProduct, price: Number(e.target.value) })}
                       className="form-input"
                     />
                   </div>
@@ -1825,73 +2480,17 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                 </div>
 
                 <div className="form-group">
-                  <label className="form-label">Availability Status</label>
-                  <select
-                    value={editingProduct.status}
-                    onChange={(e) =>
-                      setEditingProduct({
-                        ...editingProduct,
-                        status: e.target.value as ProductStatus,
-                      })
-                    }
-                    className="form-select"
-                  >
-                    <option value="in_stock">In Stock</option>
-                    <option value="low_stock">Low Stock</option>
-                    <option value="out_of_stock">Out of Stock</option>
-                  </select>
-                </div>
-
-                <div className="form-group">
                   <label className="form-label">Description (Optional)</label>
                   <textarea
                     rows={2}
                     value={editingProduct.description || ''}
-                    onChange={(e) =>
-                      setEditingProduct({
-                        ...editingProduct,
-                        description: e.target.value,
-                      })
-                    }
+                    onChange={(e) => setEditingProduct({ ...editingProduct, description: e.target.value })}
                     className="form-textarea"
                   />
                 </div>
 
-                <div className="form-group">
-                  <label className="form-label">Product Image</label>
-                  <input
-                    type="file"
-                    accept="image/*"
-                    onChange={(e) => handleImageFileChange(e.target.files?.[0] || null, 'edit')}
-                    className="form-input"
-                  />
-                  {editingProduct.imageUrl && (
-                    <div style={{ marginTop: '6px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                      <img
-                        src={editingProduct.imageUrl}
-                        alt="Current"
-                        style={{ width: '48px', height: '48px', borderRadius: '8px', objectFit: 'cover' }}
-                      />
-                      <button
-                        type="button"
-                        onClick={() =>
-                          setEditingProduct({ ...editingProduct, imageUrl: undefined })
-                        }
-                        className="btn btn-outline-soft"
-                        style={{ padding: '4px 8px', fontSize: '11px' }}
-                      >
-                        Remove image
-                      </button>
-                    </div>
-                  )}
-                </div>
-
                 <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '10px' }}>
-                  <button
-                    type="button"
-                    onClick={() => setEditingProduct(null)}
-                    className="btn btn-outline-soft"
-                  >
+                  <button type="button" onClick={() => setEditingProduct(null)} className="btn btn-outline-soft">
                     Cancel
                   </button>
                   <button type="submit" className="btn btn-primary">
@@ -1905,7 +2504,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
         )}
       </AnimatePresence>
 
-      {/* DELETE PRODUCT CONFIRM MODAL */}
+      {/* DELETE PRODUCT CONFIRM */}
       <AnimatePresence>
         {productToDelete && (
           <div className="modal-overlay" onClick={() => setProductToDelete(null)}>
@@ -1925,306 +2524,12 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
               <p style={{ fontSize: '14px', color: 'var(--text-muted)', lineHeight: 1.5 }}>
                 Are you sure you want to remove <strong>&ldquo;{productToDelete.name}&rdquo;</strong> from shop inventory?
               </p>
-              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
-                <button
-                  onClick={() => setProductToDelete(null)}
-                  className="btn btn-outline-soft"
-                >
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '16px' }}>
+                <button onClick={() => setProductToDelete(null)} className="btn btn-outline-soft">
                   Cancel
                 </button>
                 <button onClick={handleConfirmDeleteProduct} className="btn btn-danger">
                   Delete Product
-                </button>
-              </div>
-            </motion.div>
-          </div>
-        )}
-      </AnimatePresence>
-
-      {/* ADD GUIDE / TASK MODAL (OPTIONAL DESCRIPTION) */}
-      <AnimatePresence>
-        {isAddingGuide && (
-          <div className="modal-overlay" onClick={() => setIsAddingGuide(false)}>
-            <motion.div
-              initial={{ opacity: 0, scale: 0.94 }}
-              animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, scale: 0.94 }}
-              className="modal-card"
-              onClick={(e) => e.stopPropagation()}
-            >
-              <div className="modal-header">
-                <h3>Add New Task / Guide</h3>
-                <button onClick={() => setIsAddingGuide(false)} className="modal-close-btn">
-                  <X size={16} />
-                </button>
-              </div>
-
-              <form onSubmit={handleCreateGuide} style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
-                <div className="form-group">
-                  <label className="form-label">Task Title *</label>
-                  <input
-                    type="text"
-                    required
-                    value={newGuideTitle}
-                    onChange={(e) => setNewGuideTitle(e.target.value)}
-                    placeholder="e.g. Passport Size Photo 8-in-1 Sheet"
-                    className="form-input"
-                  />
-                </div>
-
-                {/* Description is completely optional: no HTML required attribute */}
-                <div className="form-group">
-                  <label className="form-label">Description (Optional)</label>
-                  <textarea
-                    rows={2}
-                    value={newGuideDesc}
-                    onChange={(e) => setNewGuideDesc(e.target.value)}
-                    placeholder="Optional notes or instructions summary"
-                    className="form-textarea"
-                  />
-                </div>
-
-                <div className="form-group">
-                  <label className="form-label">Category</label>
-                  <select
-                    value={newGuideCat}
-                    onChange={(e) => setNewGuideCat(e.target.value as GuideCategory)}
-                    className="form-select"
-                  >
-                    <option value="WhatsApp">WhatsApp</option>
-                    <option value="Cards & IDs">Cards &amp; IDs</option>
-                    <option value="Xerox">Xerox</option>
-                    <option value="Colour Print">Colour Print</option>
-                    <option value="Email & PDF">Email &amp; PDF</option>
-                  </select>
-                </div>
-
-                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '10px' }}>
-                  <button
-                    type="button"
-                    onClick={() => setIsAddingGuide(false)}
-                    className="btn btn-outline-soft"
-                  >
-                    Cancel
-                  </button>
-                  <button type="submit" className="btn btn-primary">
-                    Create Task
-                  </button>
-                </div>
-              </form>
-            </motion.div>
-          </div>
-        )}
-      </AnimatePresence>
-
-      {/* EDIT GUIDE / TASK MODAL (OPTIONAL DESCRIPTION) */}
-      <AnimatePresence>
-        {editingGuide && (
-          <div className="modal-overlay" onClick={() => setEditingGuide(null)}>
-            <motion.div
-              initial={{ opacity: 0, scale: 0.94 }}
-              animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, scale: 0.94 }}
-              className="modal-card"
-              onClick={(e) => e.stopPropagation()}
-            >
-              <div className="modal-header">
-                <h3>Edit Task Details</h3>
-                <button onClick={() => setEditingGuide(null)} className="modal-close-btn">
-                  <X size={16} />
-                </button>
-              </div>
-
-              <form onSubmit={handleSaveGuideEdit} style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
-                <div className="form-group">
-                  <label className="form-label">Task Title *</label>
-                  <input
-                    type="text"
-                    required
-                    value={editingGuide.title}
-                    onChange={(e) =>
-                      setEditingGuide({ ...editingGuide, title: e.target.value })
-                    }
-                    className="form-input"
-                  />
-                </div>
-
-                {/* Description is completely optional: can be cleared or added */}
-                <div className="form-group">
-                  <label className="form-label">Description (Optional)</label>
-                  <textarea
-                    rows={2}
-                    value={editingGuide.description || ''}
-                    onChange={(e) =>
-                      setEditingGuide({ ...editingGuide, description: e.target.value })
-                    }
-                    placeholder="Leave empty or enter description"
-                    className="form-textarea"
-                  />
-                </div>
-
-                <div className="form-group">
-                  <label className="form-label">Category</label>
-                  <select
-                    value={editingGuide.category}
-                    onChange={(e) =>
-                      setEditingGuide({
-                        ...editingGuide,
-                        category: e.target.value as GuideCategory,
-                      })
-                    }
-                    className="form-select"
-                  >
-                    <option value="WhatsApp">WhatsApp</option>
-                    <option value="Cards & IDs">Cards &amp; IDs</option>
-                    <option value="Xerox">Xerox</option>
-                    <option value="Colour Print">Colour Print</option>
-                    <option value="Email & PDF">Email &amp; PDF</option>
-                  </select>
-                </div>
-
-                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '10px' }}>
-                  <button
-                    type="button"
-                    onClick={() => setEditingGuide(null)}
-                    className="btn btn-outline-soft"
-                  >
-                    Cancel
-                  </button>
-                  <button type="submit" className="btn btn-primary">
-                    <Save size={14} />
-                    <span>Save Changes</span>
-                  </button>
-                </div>
-              </form>
-            </motion.div>
-          </div>
-        )}
-      </AnimatePresence>
-
-      {/* DELETE GUIDE CONFIRM */}
-      <AnimatePresence>
-        {guideToDelete && (
-          <div className="modal-overlay" onClick={() => setGuideToDelete(null)}>
-            <motion.div
-              initial={{ opacity: 0, scale: 0.94 }}
-              animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, scale: 0.94 }}
-              className="modal-card"
-              onClick={(e) => e.stopPropagation()}
-            >
-              <div className="modal-header">
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                  <AlertTriangle size={18} color="#b91c1c" />
-                  <h3 style={{ color: '#b91c1c' }}>Delete Task?</h3>
-                </div>
-              </div>
-              <p style={{ fontSize: '14px', color: 'var(--text-muted)', lineHeight: 1.5 }}>
-                Are you sure you want to delete <strong>&ldquo;{guideToDelete.title}&rdquo;</strong>?
-              </p>
-              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
-                <button onClick={() => setGuideToDelete(null)} className="btn btn-outline-soft">
-                  Cancel
-                </button>
-                <button onClick={handleConfirmDeleteGuide} className="btn btn-danger">
-                  Delete Task
-                </button>
-              </div>
-            </motion.div>
-          </div>
-        )}
-      </AnimatePresence>
-
-      {/* EDIT STEP MODAL */}
-      <AnimatePresence>
-        {editingStep && (
-          <div className="modal-overlay" onClick={() => setEditingStep(null)}>
-            <motion.div
-              initial={{ opacity: 0, scale: 0.94 }}
-              animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, scale: 0.94 }}
-              className="modal-card"
-              onClick={(e) => e.stopPropagation()}
-            >
-              <div className="modal-header">
-                <h3>Edit Step Instruction</h3>
-                <button onClick={() => setEditingStep(null)} className="modal-close-btn">
-                  <X size={16} />
-                </button>
-              </div>
-
-              <form onSubmit={handleSaveStepEdit} style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
-                <div className="form-group">
-                  <label className="form-label">Instruction Text *</label>
-                  <textarea
-                    rows={2}
-                    required
-                    value={editingStep.instruction}
-                    onChange={(e) =>
-                      setEditingStep({ ...editingStep, instruction: e.target.value })
-                    }
-                    className="form-textarea"
-                  />
-                </div>
-
-                <div className="form-group">
-                  <label className="form-label">Description (Optional)</label>
-                  <textarea
-                    rows={2}
-                    value={editingStep.description || editingStep.note || ''}
-                    onChange={(e) =>
-                      setEditingStep({ ...editingStep, description: e.target.value })
-                    }
-                    placeholder="Optional tips, notes, or printer tray details"
-                    className="form-textarea"
-                  />
-                </div>
-
-                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
-                  <button
-                    type="button"
-                    onClick={() => setEditingStep(null)}
-                    className="btn btn-outline-soft"
-                  >
-                    Cancel
-                  </button>
-                  <button type="submit" className="btn btn-primary">
-                    <Save size={14} />
-                    <span>Save Step</span>
-                  </button>
-                </div>
-              </form>
-            </motion.div>
-          </div>
-        )}
-      </AnimatePresence>
-
-      {/* DELETE STEP CONFIRM */}
-      <AnimatePresence>
-        {stepToDelete && (
-          <div className="modal-overlay" onClick={() => setStepToDelete(null)}>
-            <motion.div
-              initial={{ opacity: 0, scale: 0.94 }}
-              animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, scale: 0.94 }}
-              className="modal-card"
-              onClick={(e) => e.stopPropagation()}
-            >
-              <div className="modal-header">
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                  <AlertTriangle size={18} color="#b91c1c" />
-                  <h3 style={{ color: '#b91c1c' }}>Delete Step?</h3>
-                </div>
-              </div>
-              <p style={{ fontSize: '14px', color: 'var(--text-muted)' }}>
-                Are you sure you want to remove this step from the printing guide?
-              </p>
-              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
-                <button onClick={() => setStepToDelete(null)} className="btn btn-outline-soft">
-                  Cancel
-                </button>
-                <button onClick={handleConfirmDeleteStep} className="btn btn-danger">
-                  Delete Step
                 </button>
               </div>
             </motion.div>

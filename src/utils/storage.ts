@@ -1,12 +1,57 @@
-import { Guide, ProgressMap, ProductCategory, Product } from '../types';
+import { Guide, ProgressMap, ProductCategory, Product, PrintingCategory } from '../types';
 
 export const STORAGE_KEYS = {
   GUIDES: 'printmate_guides_v2',
+  PRINTING_CATEGORIES: 'printmate_printing_categories_v2',
   PROGRESS: 'printmate_progress_v2',
   ADMIN_AUTH: 'printmate_admin_auth_v2',
   CATEGORIES: 'printmate_categories_v2',
   PRODUCTS: 'printmate_products_v2',
+  DATA_INITIALIZED: 'printmate_data_initialized_v2',
 };
+
+export const INITIAL_PRINTING_CATEGORIES: PrintingCategory[] = [
+  {
+    id: 'pcat-wa',
+    name: 'WhatsApp',
+    description: 'Customer documents, PDFs, tickets, and photos received via WhatsApp.',
+    icon: 'MessageSquareText',
+    color: 'lavender',
+    createdAt: 1700000001,
+  },
+  {
+    id: 'pcat-cards',
+    name: 'Cards & IDs',
+    description: 'Aadhaar cards, PAN cards, voter IDs, and driving licenses.',
+    icon: 'CreditCard',
+    color: 'pink',
+    createdAt: 1700000002,
+  },
+  {
+    id: 'pcat-xerox',
+    name: 'Xerox',
+    description: 'Single-sided, duplex, legal paper, and book photocopies.',
+    icon: 'Copy',
+    color: 'pink',
+    createdAt: 1700000003,
+  },
+  {
+    id: 'pcat-color',
+    name: 'Colour Print',
+    description: 'College project reports, presentation slides, photos, and certificates.',
+    icon: 'Printer',
+    color: 'cream',
+    createdAt: 1700000004,
+  },
+  {
+    id: 'pcat-email',
+    name: 'Email & PDF',
+    description: 'Documents, resume CVs, job applications, and hall tickets from emails.',
+    icon: 'Mail',
+    color: 'sky',
+    createdAt: 1700000005,
+  },
+];
 
 export const INITIAL_GUIDES: Guide[] = [
   {
@@ -247,17 +292,60 @@ export const INITIAL_PRODUCTS: Product[] = [
 ];
 
 /**
- * Loads guides from localStorage. Initializes with INITIAL_GUIDES only if not yet set.
+ * Ensure storage is seeded once on first installation.
+ * Never restores deleted items if already initialized!
+ */
+export function ensureInitialStorage(): void {
+  try {
+    const isInitialized = localStorage.getItem(STORAGE_KEYS.DATA_INITIALIZED);
+    if (!isInitialized) {
+      localStorage.setItem(STORAGE_KEYS.GUIDES, JSON.stringify(INITIAL_GUIDES));
+      localStorage.setItem(STORAGE_KEYS.PRINTING_CATEGORIES, JSON.stringify(INITIAL_PRINTING_CATEGORIES));
+      localStorage.setItem(STORAGE_KEYS.CATEGORIES, JSON.stringify(INITIAL_CATEGORIES));
+      localStorage.setItem(STORAGE_KEYS.PRODUCTS, JSON.stringify(INITIAL_PRODUCTS));
+      localStorage.setItem(STORAGE_KEYS.DATA_INITIALIZED, 'true');
+    }
+  } catch (err) {
+    console.error('Failed to initialize storage', err);
+  }
+}
+
+/**
+ * Loads printing categories from localStorage.
+ */
+export function getSavedPrintingCategories(): PrintingCategory[] {
+  try {
+    ensureInitialStorage();
+    const raw = localStorage.getItem(STORAGE_KEYS.PRINTING_CATEGORIES);
+    if (!raw) return INITIAL_PRINTING_CATEGORIES;
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : INITIAL_PRINTING_CATEGORIES;
+  } catch (err) {
+    console.error('Failed to load printing categories', err);
+    return INITIAL_PRINTING_CATEGORIES;
+  }
+}
+
+export function savePrintingCategories(categories: PrintingCategory[]): void {
+  try {
+    localStorage.setItem(STORAGE_KEYS.PRINTING_CATEGORIES, JSON.stringify(categories));
+    localStorage.setItem(STORAGE_KEYS.DATA_INITIALIZED, 'true');
+  } catch (err) {
+    console.error('Failed to save printing categories', err);
+  }
+}
+
+/**
+ * Loads guides from localStorage. Never restores deleted guides if already initialized!
  */
 export function getSavedGuides(): Guide[] {
   try {
+    ensureInitialStorage();
     const raw = localStorage.getItem(STORAGE_KEYS.GUIDES);
-    if (!raw) {
-      localStorage.setItem(STORAGE_KEYS.GUIDES, JSON.stringify(INITIAL_GUIDES));
-      return INITIAL_GUIDES;
-    }
+    if (!raw) return INITIAL_GUIDES;
     const parsed = JSON.parse(raw);
-    if (Array.isArray(parsed) && parsed.length > 0) {
+    // Respect user deletions: even if empty array, return empty array!
+    if (Array.isArray(parsed)) {
       return parsed;
     }
     return INITIAL_GUIDES;
@@ -270,6 +358,7 @@ export function getSavedGuides(): Guide[] {
 export function saveGuides(guides: Guide[]): void {
   try {
     localStorage.setItem(STORAGE_KEYS.GUIDES, JSON.stringify(guides));
+    localStorage.setItem(STORAGE_KEYS.DATA_INITIALIZED, 'true');
   } catch (err) {
     console.error('Failed to save guides to storage', err);
   }
@@ -339,11 +428,9 @@ export function resetAllGuidesProgress(): ProgressMap {
  */
 export function getSavedCategories(): ProductCategory[] {
   try {
+    ensureInitialStorage();
     const raw = localStorage.getItem(STORAGE_KEYS.CATEGORIES);
-    if (!raw) {
-      localStorage.setItem(STORAGE_KEYS.CATEGORIES, JSON.stringify(INITIAL_CATEGORIES));
-      return INITIAL_CATEGORIES;
-    }
+    if (!raw) return INITIAL_CATEGORIES;
     const parsed = JSON.parse(raw);
     return Array.isArray(parsed) ? parsed : INITIAL_CATEGORIES;
   } catch (err) {
@@ -355,6 +442,7 @@ export function getSavedCategories(): ProductCategory[] {
 export function saveCategories(categories: ProductCategory[]): void {
   try {
     localStorage.setItem(STORAGE_KEYS.CATEGORIES, JSON.stringify(categories));
+    localStorage.setItem(STORAGE_KEYS.DATA_INITIALIZED, 'true');
   } catch (err) {
     console.error('Failed to save categories', err);
   }
@@ -365,11 +453,9 @@ export function saveCategories(categories: ProductCategory[]): void {
  */
 export function getSavedProducts(): Product[] {
   try {
+    ensureInitialStorage();
     const raw = localStorage.getItem(STORAGE_KEYS.PRODUCTS);
-    if (!raw) {
-      localStorage.setItem(STORAGE_KEYS.PRODUCTS, JSON.stringify(INITIAL_PRODUCTS));
-      return INITIAL_PRODUCTS;
-    }
+    if (!raw) return INITIAL_PRODUCTS;
     const parsed = JSON.parse(raw);
     if (Array.isArray(parsed)) {
       // Ensure visibility is always set (defaulting to 'private' if undefined)
@@ -388,6 +474,7 @@ export function getSavedProducts(): Product[] {
 export function saveProducts(products: Product[]): void {
   try {
     localStorage.setItem(STORAGE_KEYS.PRODUCTS, JSON.stringify(products));
+    localStorage.setItem(STORAGE_KEYS.DATA_INITIALIZED, 'true');
   } catch (err) {
     console.error('Failed to save products', err);
   }
